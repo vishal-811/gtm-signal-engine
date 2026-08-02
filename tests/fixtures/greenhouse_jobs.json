@@ -1,0 +1,127 @@
+{
+  "jobs": [
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/vercel/jobs/6122437004",
+      "internal_job_id": 5190494004,
+      "location": {
+        "name": "Hybrid - San Francisco, New York City, Austin"
+      },
+      "id": 6122437004,
+      "updated_at": "2026-07-23T13:37:26-04:00",
+      "requisition_id": "1297",
+      "title": "DevRel Engineer, Agentic Infrastructure",
+      "company_name": "Vercel",
+      "first_published": "2026-07-22T13:27:13-04:00",
+      "language": "en",
+      "application_deadline": null
+    },
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/vercel/jobs/6120051004",
+      "internal_job_id": 5189649004,
+      "location": {
+        "name": "Hybrid - San Francisco, New York City, Austin"
+      },
+      "id": 6120051004,
+      "updated_at": "2026-07-31T13:00:04-04:00",
+      "requisition_id": "1290",
+      "title": "Director of Forward Deployed Engineering",
+      "company_name": "Vercel",
+      "first_published": "2026-07-20T18:04:07-04:00",
+      "language": "en",
+      "application_deadline": null
+    },
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/vercel/jobs/5701765004",
+      "internal_job_id": 5003490004,
+      "location": {
+        "name": "Hybrid - San Francisco"
+      },
+      "id": 5701765004,
+      "updated_at": "2026-07-22T12:50:03-04:00",
+      "requisition_id": "1025",
+      "title": "Engineering Manager, CDN",
+      "company_name": "Vercel",
+      "first_published": "2025-11-07T13:46:09-05:00",
+      "language": "en",
+      "application_deadline": null
+    },
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/vercel/jobs/5778418004",
+      "internal_job_id": 5039984004,
+      "location": {
+        "name": "Hybrid - London, Berlin"
+      },
+      "id": 5778418004,
+      "updated_at": "2026-07-22T12:50:03-04:00",
+      "requisition_id": "1099",
+      "title": "Forward-Deployed Engineer",
+      "company_name": "Vercel",
+      "first_published": "2026-01-22T11:37:20-05:00",
+      "language": "en",
+      "application_deadline": null
+    },
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/vercel/jobs/5752684004",
+      "internal_job_id": 5027514004,
+      "location": {
+        "name": "Hybrid - San Francisco, New York City, Austin"
+      },
+      "id": 5752684004,
+      "updated_at": "2026-07-22T12:50:03-04:00",
+      "requisition_id": "1087",
+      "title": "Forward-Deployed Engineer\u00a0",
+      "company_name": "Vercel",
+      "first_published": "2026-01-07T15:45:38-05:00",
+      "language": "en",
+      "application_deadline": null
+    },
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/vercel/jobs/5999792004",
+      "internal_job_id": 5156316004,
+      "location": {
+        "name": "Hybrid - London"
+      },
+      "id": 5999792004,
+      "updated_at": "2026-07-22T12:50:03-04:00",
+      "requisition_id": "1240",
+      "title": "Account Executive, Majors",
+      "company_name": "Vercel",
+      "first_published": "2026-05-21T09:26:09-04:00",
+      "language": "en",
+      "application_deadline": null
+    },
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/vercel/jobs/5841911004",
+      "internal_job_id": 5070702004,
+      "location": {
+        "name": "Hybrid - Sydney"
+      },
+      "id": 5841911004,
+      "updated_at": "2026-07-22T12:50:03-04:00",
+      "requisition_id": "1184",
+      "title": "Account Executive, Majors (APAC)",
+      "company_name": "Vercel",
+      "first_published": "2026-06-23T18:49:37-04:00",
+      "language": "en",
+      "application_deadline": null
+    },
+    {
+      "absolute_url": "https://job-boards.greenhouse.io/vercel/jobs/6100103004",
+      "internal_job_id": 5178079004,
+      "location": {
+        "name": "Hybrid - Sydney"
+      },
+      "id": 6100103004,
+      "updated_at": "2026-07-22T12:50:03-04:00",
+      "requisition_id": "1263",
+      "title": "Account Executive, Majors- Install Base (APAC)",
+      "company_name": "Vercel",
+      "first_published": "2026-06-25T12:45:34-04:00",
+      "language": "en",
+      "application_deadline": null
+    }
+  ],
+  "meta": {
+    "total": 81
+  }
+}

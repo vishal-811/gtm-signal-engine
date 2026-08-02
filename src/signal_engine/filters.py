@@ -1,0 +1,251 @@
+"""Post-extraction filtering: validity, recency, geography, dedupe.
+
+Everything here is a pure function over already-extracted events, so the whole
+stage is testable offline and costs nothing to re-run while tuning.
+
+Order matters — the cheap, high-rejection filters run first so the expensive
+downstream stages (ATS lookups, scoring) see the smallest possible set.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+from dataclasses import dataclass, field
+from datetime import date, datetime, timedelta, timezone
+
+from .config import MarketConfig, geo_config, settings
+from .schemas import Candidate, FundingEvent, Market
+from .textutil import normalize_company
+
+log = logging.getLogger(__name__)
+
+# Below this, the model is telling us it was guessing.
+MIN_EXTRACTION_CONFIDENCE = 0.6
+
+
+@dataclass
+class FilterReport:
+    """Why candidates were dropped, so a thin day is explainable rather than
+    mysterious. Surfaced by `run --dry-run` and logged to the `runs` tab."""
+
+    input_count: int = 0
+    kept: int = 0
+    not_funding: int = 0
+    low_confidence: int = 0
+    too_old: int = 0
+    wrong_geo: int = 0
+    duplicate: int = 0
+    recently_seen: int = 0
+    rejected_examples: list[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        return (
+            f"{self.input_count} events → {self.kept} kept "
+            f"(dropped: {self.not_funding} not-funding, "
+            f"{self.low_confidence} low-confidence, {self.too_old} stale, "
+            f"{self.wrong_geo} out-of-market, {self.duplicate} duplicate, "
+            f"{self.recently_seen} recently-posted)"
+        )
+
+    def _note(self, event: FundingEvent, reason: str) -> None:
+        if len(self.rejected_examples) < 25:
+            self.rejected_examples.append(f"{event.company_name}: {reason}")
+
+
+# ── Geography ─────────────────────────────────────────────────────────────────
+
+
+def _phrase_pattern(phrase: str) -> re.Pattern[str]:
+    """Whole-phrase matcher.
+
+    Word boundaries are what stop "sf" matching "sfo-adjacent" and "york"
+    matching "New York" — a plain substring check produces both false positives
+    and false negatives here.
+    """
+    return re.compile(rf"(?<![a-z0-9]){re.escape(phrase.lower())}(?![a-z0-9])")
+
+
+# Compiled once at import; the alias lists are static config.
+_MARKET_PATTERNS: dict[str, list[re.Pattern[str]]] = {}
+_EXCLUSION_PATTERNS: list[re.Pattern[str]] = []
+
+
+def _ensure_patterns() -> None:
+    global _EXCLUSION_PATTERNS
+    if _MARKET_PATTERNS:
+        return
+    geo = geo_config()
+    for market in geo.markets:
+        _MARKET_PATTERNS[market.id] = [_phrase_pattern(a) for a in market.aliases]
+    _EXCLUSION_PATTERNS = [_phrase_pattern(e) for e in geo.exclusions]
+
+
+def _country_allows(market: MarketConfig, country: str | None) -> bool:
+    """An unknown country never vetoes a match.
+
+    Feeds often omit the country. Rejecting on absence would throw away good
+    candidates, and the city alias is already a strong signal on its own.
+    """
+    if not market.countries:
+        return True
+    if not country:
+        return True
+    normalized = country.strip().lower().rstrip(".")
+    return any(normalized == c.strip().lower().rstrip(".") for c in market.countries)
+
+
+def match_market(city: str | None, country: str | None = None) -> Market | None:
+    """Resolve a location to one of the three target markets, or None."""
+    _ensure_patterns()
+    if not city:
+        return None
+
+    haystack = city.lower()
+    if any(p.search(haystack) for p in _EXCLUSION_PATTERNS):
+        return None
+
+    geo = geo_config()
+    best: tuple[int, Market] | None = None
+    for market in geo.markets:
+        if not _country_allows(market, country):
+            continue
+        for alias, pattern in zip(market.aliases, _MARKET_PATTERNS[market.id]):
+            if pattern.search(haystack):
+                # Longest alias wins: "south san francisco" should not be
+                # decided by whichever market happened to be listed first.
+                score = len(alias)
+                if best is None or score > best[0]:
+                    best = (score, market.id)  # type: ignore[assignment]
+    return best[1] if best else None
+
+
+# ── Individual predicates ─────────────────────────────────────────────────────
+
+
+def is_valid_funding(event: FundingEvent) -> bool:
+    return event.is_funding_announcement
+
+
+def is_confident(event: FundingEvent, minimum: float = MIN_EXTRACTION_CONFIDENCE) -> bool:
+    return event.extraction_confidence >= minimum
+
+
+def is_recent(event: FundingEvent, max_age_days: int | None = None) -> bool:
+    """Recency check on the announcement date.
+
+    Events with no announcement date are **kept**: the article itself already
+    passed the ingest recency window, so a missing field is a gap in the
+    extraction, not evidence the round is old.
+    """
+    if event.announced_date is None:
+        return True
+    days = max_age_days if max_age_days is not None else settings().max_event_age_days
+    cutoff = datetime.now(timezone.utc).date() - timedelta(days=days)
+    return event.announced_date >= cutoff
+
+
+# ── Pipeline ──────────────────────────────────────────────────────────────────
+
+
+def apply(
+    events: list[FundingEvent],
+    *,
+    seen_keys: dict[str, date] | None = None,
+    dedupe_window_days: int | None = None,
+) -> tuple[list[Candidate], FilterReport]:
+    """Run every filter in order and return surviving candidates.
+
+    ``seen_keys`` maps a company key to the date it was last posted, read from
+    the `seen` sheet tab. Passing None skips suppression entirely, which is what
+    dry runs do so you can see the full unfiltered picture.
+    """
+    report = FilterReport(input_count=len(events))
+    window = (
+        dedupe_window_days
+        if dedupe_window_days is not None
+        else settings().dedupe_window_days
+    )
+    cutoff = datetime.now(timezone.utc).date() - timedelta(days=window)
+
+    candidates: list[Candidate] = []
+    seen_this_run: set[str] = set()
+
+    for event in events:
+        if not is_valid_funding(event):
+            report.not_funding += 1
+            continue
+
+        if not is_confident(event):
+            report.low_confidence += 1
+            report._note(event, f"confidence {event.extraction_confidence:.2f}")
+            continue
+
+        if not is_recent(event):
+            report.too_old += 1
+            report._note(event, f"announced {event.announced_date}")
+            continue
+
+        market = match_market(event.hq_city, event.hq_country)
+        if market is None:
+            report.wrong_geo += 1
+            report._note(event, f"HQ {event.hq_city or 'unknown'}, {event.hq_country or '?'}")
+            continue
+
+        candidate = Candidate(event=event, market=market)
+        key = candidate.key
+
+        # Two companies can appear twice in one run when different outlets name
+        # them slightly differently and the title dedupe missed it.
+        if key in seen_this_run:
+            report.duplicate += 1
+            continue
+        seen_this_run.add(key)
+
+        if seen_keys is not None:
+            last_posted = seen_keys.get(key)
+            if last_posted is not None and last_posted >= cutoff:
+                report.recently_seen += 1
+                report._note(event, f"posted {last_posted}, within {window}d window")
+                continue
+
+        candidates.append(candidate)
+
+    report.kept = len(candidates)
+    log.info("filters: %s", report.summary())
+    return candidates, report
+
+
+def normalized_seen_keys(rows: list[tuple[str, date]]) -> dict[str, date]:
+    """Build the suppression map from raw `seen` tab rows.
+
+    Keys are normalized the same way :attr:`Candidate.key` normalizes them, so a
+    company logged under a slightly different spelling still suppresses.
+    """
+    result: dict[str, date] = {}
+    for raw_key, seen_on in rows:
+        key = _as_key(raw_key)
+        existing = result.get(key)
+        if existing is None or seen_on > existing:
+            result[key] = seen_on
+    return result
+
+
+def _as_key(raw: str) -> str:
+    """Interpret a `seen` tab value as either a domain or a company name.
+
+    A dot alone is not enough to identify a domain — "Acme Inc." has one. A
+    domain has a dot and no whitespace; anything else is a name and gets the
+    same normalization :attr:`Candidate.key` applies, so the two agree.
+    """
+    stripped = raw.strip()
+    if "." in stripped and not any(c.isspace() for c in stripped):
+        return stripped.lower()
+    return normalize_company(stripped)
+
+
+def reset_pattern_cache() -> None:
+    """Clear compiled geo patterns. Used by tests that swap in a temp config."""
+    _MARKET_PATTERNS.clear()
+    global _EXCLUSION_PATTERNS
+    _EXCLUSION_PATTERNS = []

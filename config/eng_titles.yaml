@@ -1,0 +1,120 @@
+# Which job titles count as "engineering" for the openings check.
+#
+# A title matches when it contains an `include` phrase AND no `exclude` phrase.
+# Exclusions are checked first and win outright.
+#
+# Matching is case-insensitive, on word boundaries, and tolerant of a trailing
+# "s" or "ing" on the final word — so "support engineer" also catches "Support
+# Engineering Manager", and "engineer" catches "Engineering".
+#
+# ── Design notes, from validating against live boards 2026-08-02 ─────────────
+#
+# 1. `include` holds ROLE NOUNS, not discipline adjectives. An earlier version
+#    listed "platform", "infrastructure", "mobile", "ios" etc. directly, which
+#    matched "Account Executive, Strategic Platform Partnerships" on Stripe's
+#    board. Every genuine IC engineering title already contains a role noun
+#    ("Android Engineer III", "Full Stack Developer"), so the adjectives added
+#    false positives and no recall.
+#
+# 2. Leadership titles are excluded. Hire100x places individual contributors
+#    who ship code; a "Director of Engineering" opening is not a role this
+#    network fills, and counting it inflates the hiring-intent score. Note
+#    "principal" and "staff" are NOT excluded — those are senior IC ladders.
+#
+# 3. "Member of Technical Staff" is included explicitly. AI labs use it as
+#    their standard IC engineer title and it contains no role noun.
+
+include:
+  # Core role nouns
+  - engineer
+  - developer
+  - programmer
+  - sde
+  - swe
+  # AI-lab IC convention, no role noun of its own
+  - member of technical staff
+  - technical staff
+  # Standalone discipline titles that genuinely appear without a role noun
+  - sre
+  - devops
+  - site reliability
+
+exclude:
+  # ── Leadership and management ─────────────────────────────────────────────
+  # Not IC roles. "principal"/"staff" deliberately absent — senior IC ladders.
+  - manager
+  - director
+  - vp
+  - vice president
+  - head of
+  - chief
+  - cto
+  - lead engineer      # ambiguous; usually a people-leadership post
+  - engineering lead
+
+  # ── Revenue-side roles that contain "engineer" ────────────────────────────
+  - sales engineer
+  - solutions engineer
+  - solution engineer
+  - solutions architect
+  - solution architect
+  - customer engineer
+  - support engineer
+  - field engineer
+  - implementation engineer
+  - forward deployed engineer
+  - forward deployed
+  - partner engineer
+  - account executive
+  - account manager
+  - developer advocate
+  - developer relations
+  - developer evangelist
+  - devrel
+
+  # ── Non-software engineering ──────────────────────────────────────────────
+  - mechanical engineer
+  - electrical engineer
+  - civil engineer
+  - chemical engineer
+  - process engineer
+  - manufacturing engineer
+  - hardware engineer
+  - industrial engineer
+  - biomedical engineer
+  - optical engineer
+
+  # ── Internal IT, not product engineering ──────────────────────────────────
+  - it systems
+  - corporate engineering
+  - business systems
+
+  # ── Non-engineering roles that name an engineering org ────────────────────
+  # e.g. "Communications Lead, Infrastructure and Engineering" on a real board.
+  - communications
+  - marketing
+  - designer
+  # Research/analytics tracks are a different hiring pool from IC engineers.
+  # "Research Engineer" still counts — it has no "scientist" in the title.
+  - scientist
+  - analyst
+
+  # ── Recruiting and program roles that mention engineering ─────────────────
+  - technical recruiter
+  - engineering recruiter
+  - recruiter
+  - sourcer
+  - program manager
+  - project manager
+  - chief of staff
+
+  # ── Not permanent IC headcount ────────────────────────────────────────────
+  - intern
+  - internship
+  - apprentice
+  - co-op
+  - fellow
+  - fellowship
+  - fellows program
+  - contractor
+  - contract

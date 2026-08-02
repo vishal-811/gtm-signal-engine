@@ -1,0 +1,77 @@
+# Target markets. A company matches a market when any alias appears as a whole
+# phrase in its HQ city/country text AND (if `countries` is set) the country is
+# either unknown or in the list.
+#
+# Aliases are matched case-insensitively on word boundaries, so "york" will not
+# match "New York" and "sf" will not match "sfo-adjacent".
+
+markets:
+  - id: sf-bay-area
+    label: SF Bay Area
+    countries: [united states, usa, us, u.s., u.s.a.]
+    aliases:
+      - san francisco
+      - south san francisco
+      - sf
+      - bay area
+      - silicon valley
+      - palo alto
+      - mountain view
+      - menlo park
+      - redwood city
+      - san mateo
+      - foster city
+      - burlingame
+      - sunnyvale
+      - santa clara
+      - san jose
+      - cupertino
+      - oakland
+      - berkeley
+      - emeryville
+      - alameda
+      - fremont
+      - los altos
+      - belmont
+
+  - id: nyc-metro
+    label: NYC Metro
+    countries: [united states, usa, us, u.s., u.s.a.]
+    aliases:
+      - new york
+      - new york city
+      - nyc
+      - manhattan
+      - brooklyn
+      - queens
+      - bronx
+      - long island city
+      - jersey city
+      - hoboken
+      - newark
+
+  - id: bengaluru
+    label: Bengaluru
+    countries: [india, in]
+    aliases:
+      - bengaluru
+      - bangalore
+      - blr
+      - whitefield
+      - koramangala
+      - indiranagar
+      - hsr layout
+      - electronic city
+      - jayanagar
+      - marathahalli
+      - hebbal
+
+# Phrases that veto a match outright, checked before aliases. These are entity
+# names that contain a city name but do not indicate a company location.
+exclusions:
+  - new york times
+  - new york stock exchange
+  - new york post
+  - san francisco chronicle
+  - bank of new york
+  - bangalore rural

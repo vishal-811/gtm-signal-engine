@@ -1,0 +1,77 @@
+# RSS sources for funding news.
+#
+# Add or remove entries freely — no code change required. Set `enabled: false`
+# to mute a noisy or broken feed without deleting it.
+#
+# Run `signal-engine check-feeds` to confirm every enabled feed still parses and
+# to see how fresh its items are. Feeds rot; check after any dry spell.
+#
+# ── Google News gotcha, verified 2026-08-02 ──────────────────────────────────
+# Google News RSS sorts search results by RELEVANCE, not date. Without a
+# `when:` operator these queries return 100 stale items each and zero from the
+# last 24 hours — 589 items of pure noise across six feeds, measured. The
+# `when:2d` suffix restricts to the last 48 hours at the source, which is what
+# makes them useful. Do not remove it.
+
+feeds:
+  # ── Dedicated venture/startup coverage ──────────────────────────────────────
+  - name: TechCrunch Venture
+    url: https://techcrunch.com/category/venture/feed/
+
+  - name: TechCrunch Startups
+    url: https://techcrunch.com/category/startups/feed/
+
+  - name: VentureBeat
+    url: https://venturebeat.com/feed
+
+  # Axios' newsletter feeds are inconsistently exposed. Pro Rata's scoops reach
+  # us via syndication in the Google News queries below, so this stays off
+  # unless `check-feeds` shows it working.
+  - name: Axios Pro Rata
+    url: https://api.axios.com/feed/newsletter/axios-pro-rata
+    enabled: false
+
+  # ── India coverage (Bengaluru market) ───────────────────────────────────────
+  # Entrackr serves RSS at /rss — /feed/ returns 404.
+  - name: Entrackr
+    url: https://entrackr.com/rss
+
+  - name: Inc42
+    url: https://inc42.com/feed/
+
+  - name: YourStory
+    url: https://yourstory.com/feed
+
+  # ── Google News keyword queries (see gotcha above) ──────────────────────────
+  - name: GNews - Series A
+    url: https://news.google.com/rss/search?q=%22raises%22+%22Series+A%22+startup+when:2d&hl=en-US&gl=US&ceid=US:en
+
+  - name: GNews - Series B
+    url: https://news.google.com/rss/search?q=%22raises%22+%22Series+B%22+startup+when:2d&hl=en-US&gl=US&ceid=US:en
+
+  - name: GNews - Seed
+    url: https://news.google.com/rss/search?q=%22seed+round%22+startup+funding+when:2d&hl=en-US&gl=US&ceid=US:en
+
+  - name: GNews - Series C
+    url: https://news.google.com/rss/search?q=%22raises%22+%22Series+C%22+startup+when:2d&hl=en-US&gl=US&ceid=US:en
+
+  - name: GNews - AI funding
+    url: https://news.google.com/rss/search?q=AI+startup+%22raises%22+funding+when:2d&hl=en-US&gl=US&ceid=US:en
+
+  - name: GNews - SF Bay Area
+    url: https://news.google.com/rss/search?q=startup+funding+%22San+Francisco%22+OR+%22Palo+Alto%22+when:2d&hl=en-US&gl=US&ceid=US:en
+
+  - name: GNews - NYC
+    url: https://news.google.com/rss/search?q=startup+funding+%22New+York%22+raises+when:2d&hl=en-US&gl=US&ceid=US:en
+
+  - name: GNews - Bengaluru
+    url: https://news.google.com/rss/search?q=startup+funding+Bengaluru+OR+Bangalore+raises+when:2d&hl=en-IN&gl=IN&ceid=IN:en
+
+  # ── Hacker News ─────────────────────────────────────────────────────────────
+  # Off by design, verified 2026-08-02: this query returns 50 items whose newest
+  # is ~11 months old, so every one is discarded by the recency filter. HN also
+  # isn't a funding-news venue — rounds rarely reach the front page. It costs a
+  # fetch and contributes nothing. Left here so nobody re-adds it.
+  - name: Hacker News - funding
+    url: https://hnrss.org/newest?q=raises+funding&count=50
+    enabled: false

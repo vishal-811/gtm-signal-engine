@@ -1,0 +1,115 @@
+name: Daily signal run
+
+on:
+  schedule:
+    # 02:30 UTC = 08:00 IST, so the shortlist is waiting when the day starts.
+    # GitHub's scheduler can lag by several minutes under load; that is fine
+    # for a daily digest. Change this one line to re-time the run.
+    - cron: "30 2 * * *"
+
+  # Manual trigger, defaulting to a dry run so an accidental click never posts.
+  workflow_dispatch:
+    inputs:
+      live:
+        description: "Publish to Sheets and Slack (otherwise dry run)"
+        type: boolean
+        default: false
+      limit:
+        description: "Process at most N articles (blank = all)"
+        type: string
+        default: ""
+
+concurrency:
+  # Two overlapping runs would double-post and race on the `seen` ledger.
+  group: signal-engine-run
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    # Generous: the ATS discovery stage makes many sequential HTTP calls and a
+    # high-volume news day can push a run past the default.
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Run pipeline
+        id: pipeline
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          # Actions cannot mount a file, so the service-account JSON is passed
+          # inline. Settings.google_credentials_info() accepts either form.
+          GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SENDER_NAME: ${{ secrets.SENDER_NAME }}
+          SENDER_TITLE: ${{ secrets.SENDER_TITLE }}
+          APOLLO_ENABLED: ${{ vars.APOLLO_ENABLED || 'false' }}
+          APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
+        run: |
+          set -o pipefail
+          ARGS=""
+          # Scheduled runs are always live. Manual runs publish only when the
+          # `live` input is explicitly checked.
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ inputs.live }}" = "true" ]; then
+            ARGS="--live"
+          fi
+          if [ -n "${{ inputs.limit }}" ]; then
+            ARGS="$ARGS --limit ${{ inputs.limit }}"
+          fi
+          echo "Running: signal-engine run $ARGS"
+          signal-engine run $ARGS 2>&1 | tee run.log
+
+      - name: Notify Slack on failure
+        # The pipeline posts its own alert when it fails internally. This
+        # catches the cases it cannot: dependency install failures, timeouts,
+        # a cancelled job — anything where the process never got far enough to
+        # report for itself. Without it, a broken cron is indistinguishable
+        # from a quiet day.
+        if: failure()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          url = os.environ.get("SLACK_WEBHOOK_URL", "")
+          if not url:
+              print("SLACK_WEBHOOK_URL not set; skipping failure notification")
+              raise SystemExit(0)
+          text = (
+              ":rotating_light: *Signal Engine workflow failed*\n"
+              f"The daily run did not complete. <{os.environ['RUN_URL']}|View the logs>"
+          )
+          req = urllib.request.Request(
+              url,
+              data=json.dumps({"text": text}).encode(),
+              headers={"Content-Type": "application/json"},
+          )
+          try:
+              urllib.request.urlopen(req, timeout=20)
+          except Exception as exc:
+              # Never let the notifier mask the real failure in the logs.
+              print(f"failure notification could not be delivered: {exc}")
+          PY
+
+      - name: Upload run log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-log-${{ github.run_id }}
+          path: run.log
+          retention-days: 14
+          if-no-files-found: ignore

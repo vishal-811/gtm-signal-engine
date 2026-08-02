@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Example Tech News</title>
+    <link>https://example.com</link>
+    <description>Test feed</description>
+    <item>
+      <title>Acme raises $20M Series A led by Foundry</title>
+      <link>https://example.com/acme-series-a?utm_source=rss&amp;utm_medium=feed</link>
+      <pubDate>Sat, 01 Aug 2026 14:30:00 +0000</pubDate>
+      <description>&lt;p&gt;Acme, a &lt;b&gt;San Francisco&lt;/b&gt; devtools startup, has raised $20M.&lt;/p&gt;</description>
+    </item>
+    <item>
+      <title>Beta Corp closes $8M seed</title>
+      <link>https://example.com/beta-seed</link>
+      <pubDate>Fri, 31 Jul 2026 09:00:00 +0000</pubDate>
+      <description>Beta Corp raised eight million dollars.</description>
+    </item>
+    <item>
+      <title>Item with no link should be skipped</title>
+      <pubDate>Fri, 31 Jul 2026 08:00:00 +0000</pubDate>
+      <description>No link here.</description>
+    </item>
+    <item>
+      <title>Undated item</title>
+      <link>https://example.com/undated</link>
+      <description>This one has no pubDate at all.</description>
+    </item>
+  </channel>
+</rss>

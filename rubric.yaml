@@ -1,0 +1,101 @@
+# ══════════════════════════════════════════════════════════════════════════════
+# HIRE100X FIT RUBRIC  —  this file is yours to edit
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# This is the draft I proposed. Review and change it before we build the scoring
+# stage. Everything here is data, not code: change a weight, reword a question,
+# move the threshold, add or delete a criterion — no Python edits needed.
+#
+# How scoring works:
+#   1. Claude scores each criterion 0-5 and writes one sentence of justification.
+#   2. Python computes  composite = sum(score * weight)  — deterministic and
+#      unit-tested, so the arithmetic is never hallucinated.
+#   3. Companies with composite > threshold get an outreach draft and get posted.
+#
+# Rules:
+#   - `weight` values MUST sum to exactly 1.0 (startup fails loudly otherwise).
+#   - `id` values must be unique and are what Claude echoes back.
+#   - `anchors` are few-shot calibration points. They matter a lot: vague
+#     anchors give noisy scores. Anchor 5, 3, and 0 at minimum.
+#
+# Tune with:  signal-engine score-one <article-url>
+
+threshold: 3.2   # out of 5.0. Raise for a tighter list, lower for more volume.
+
+criteria:
+  - id: hiring_intent
+    weight: 0.30
+    question: >
+      How strongly is this company hiring engineers right now? Weigh the number
+      of open engineering roles, how recently they were posted, and any explicit
+      hiring language in the funding coverage. Verified job-board data should
+      dominate this score; treat press-release claims about "growing the team"
+      as weak evidence on their own.
+    anchors:
+      "5": "8+ open engineering roles, several posted within the last 14 days"
+      "4": "5-7 open engineering roles on a live board"
+      "3": "2-4 open engineering roles, OR no board found but coverage explicitly states they are scaling engineering"
+      "1": "No board found and no hiring signal beyond the round itself"
+      "0": "Live board found with zero engineering roles on it"
+
+  - id: stage_and_size
+    weight: 0.20
+    question: >
+      Is the round stage and size in the band where a company urgently needs
+      outside sourcing help and has the budget to pay for it? Too small means no
+      hiring budget; too large usually means a mature in-house talent function
+      that does not buy from agencies.
+    anchors:
+      "5": "Seed through Series B, $5M-$50M raised"
+      "4": "Series B-C, $50M-$80M raised"
+      "3": "Pre-seed or small seed, $2M-$5M raised"
+      "1": "Series D+ with an established internal recruiting team"
+      "0": "Under $1M raised, or amount undisclosed with no other budget signal"
+
+  - id: geo_match
+    weight: 0.15
+    question: >
+      Is the company headquartered in, or building an engineering hub in, the
+      SF Bay Area, NYC metro, or Bengaluru — the three markets where Hire100x's
+      network of vetted engineers actually is?
+    anchors:
+      "5": "Headquarters in one of the three markets"
+      "3": "Remote-first or distributed, but with a named engineering hub in one of the three"
+      "2": "Elsewhere in the US or India, plausibly open to talent from these hubs"
+      "0": "No presence in or near any of the three markets"
+
+  - id: role_stack_match
+    weight: 0.15
+    question: >
+      Do the open engineering roles match the kind of engineer Hire100x's
+      network supplies — backend, full-stack, AI/ML, devtools, and
+      infrastructure ICs shipping production code?
+    anchors:
+      "5": "Most open roles are backend, full-stack, AI/ML, or infrastructure IC roles"
+      "3": "A mix; some roles match, some do not"
+      "1": "Mostly senior leadership, data science research, or QA-only roles"
+      "0": "Roles are hardware, embedded-only, or entirely non-technical"
+
+  - id: sector_fit
+    weight: 0.10
+    question: >
+      Is the company in a sector where Hire100x's engineers already ship — AI
+      labs, developer tools, fintech, or B2B SaaS?
+    anchors:
+      "5": "AI lab, developer tools, fintech, or B2B SaaS"
+      "3": "Adjacent and engineering-heavy — marketplace, consumer tech, health tech with a real product org"
+      "1": "Software-adjacent but with a thin engineering org"
+      "0": "Not a software company"
+
+  - id: urgency
+    weight: 0.10
+    question: >
+      How time-sensitive is outreach? A company is most reachable in the window
+      right after a round closes, before they have committed to a recruiting
+      vendor or filled the roles.
+    anchors:
+      "5": "Announced within the last 7 days AND coverage signals aggressive near-term hiring"
+      "4": "Announced within the last 7 days"
+      "3": "Announced 7-14 days ago"
+      "1": "Announced 14-30 days ago"
+      "0": "Announced more than 30 days ago"

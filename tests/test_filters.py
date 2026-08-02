@@ -1,0 +1,212 @@
+"""The geo matcher decides which companies ever reach scoring, so a
+false negative silently costs a lead and a false positive wastes an ATS lookup
+and an outreach draft. It gets adversarial coverage."""
+
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta, timezone
+
+import pytest
+
+from signal_engine import filters
+from signal_engine.schemas import FundingEvent
+
+TODAY = datetime.now(timezone.utc).date()
+
+
+def _event(**overrides) -> FundingEvent:
+    base = dict(
+        is_funding_announcement=True,
+        company_name="Acme",
+        company_domain="acme.com",
+        round_stage="series-a",
+        amount_usd=20_000_000,
+        announced_date=TODAY,
+        investors=["Foundry"],
+        hq_city="San Francisco",
+        hq_country="United States",
+        sector="devtools",
+        one_line_description="Developer tooling.",
+        source_url="https://example.com/acme",
+        extraction_confidence=0.9,
+    )
+    base.update(overrides)
+    return FundingEvent(**base)
+
+
+class TestMatchMarket:
+    @pytest.mark.parametrize(
+        "city,expected",
+        [
+            ("San Francisco", "sf-bay-area"),
+            ("San Francisco, CA", "sf-bay-area"),
+            ("Palo Alto", "sf-bay-area"),
+            ("Mountain View, California", "sf-bay-area"),
+            ("Oakland", "sf-bay-area"),
+            ("New York", "nyc-metro"),
+            ("New York City, NY", "nyc-metro"),
+            ("Brooklyn", "nyc-metro"),
+            ("Jersey City", "nyc-metro"),
+            ("Bengaluru", "bengaluru"),
+            ("Bangalore, India", "bengaluru"),
+            ("Koramangala, Bengaluru", "bengaluru"),
+        ],
+    )
+    def test_recognizes_target_market_cities(self, city, expected):
+        assert filters.match_market(city) == expected
+
+    @pytest.mark.parametrize(
+        "city",
+        ["Austin", "London", "Berlin", "Mumbai", "Delhi", "Seattle", "Boston", "Toronto"],
+    )
+    def test_rejects_out_of_market_cities(self, city):
+        assert filters.match_market(city) is None
+
+    def test_south_san_francisco_is_in_the_bay_area(self):
+        # It is a real Bay Area biotech hub, not a false positive to guard
+        # against — the longest-alias rule must resolve it correctly.
+        assert filters.match_market("South San Francisco, CA") == "sf-bay-area"
+
+    def test_word_boundaries_prevent_substring_false_positives(self):
+        # "sf" must not fire inside another word, and "york" must not stand in
+        # for "New York".
+        assert filters.match_market("Yorkshire") is None
+        assert filters.match_market("Transfer City") is None
+
+    def test_exclusion_phrases_veto_a_match(self):
+        # An entity name that contains a city name is not a location.
+        assert filters.match_market("New York Times Building") is None
+        assert filters.match_market("Bangalore Rural") is None
+
+    def test_country_mismatch_rejects(self):
+        # A "New York" in another country is not the NYC metro.
+        assert filters.match_market("New York", "United Kingdom") is None
+
+    def test_matching_country_accepts(self):
+        assert filters.match_market("New York", "United States") == "nyc-metro"
+
+    def test_unknown_country_does_not_veto(self):
+        # Feeds routinely omit the country; the city alias is signal enough.
+        assert filters.match_market("Bengaluru", None) == "bengaluru"
+
+    def test_handles_missing_city(self):
+        assert filters.match_market(None) is None
+        assert filters.match_market("") is None
+
+    def test_is_case_insensitive(self):
+        assert filters.match_market("SAN FRANCISCO") == "sf-bay-area"
+        assert filters.match_market("bengaluru") == "bengaluru"
+
+
+class TestPredicates:
+    def test_non_funding_events_are_invalid(self):
+        assert not filters.is_valid_funding(_event(is_funding_announcement=False))
+
+    def test_confidence_threshold(self):
+        assert filters.is_confident(_event(extraction_confidence=0.6))
+        assert not filters.is_confident(_event(extraction_confidence=0.59))
+
+    def test_recent_event_passes(self):
+        assert filters.is_recent(_event(announced_date=TODAY - timedelta(days=3)))
+
+    def test_stale_event_fails(self):
+        assert not filters.is_recent(
+            _event(announced_date=TODAY - timedelta(days=60)), max_age_days=14
+        )
+
+    def test_missing_announcement_date_is_kept(self):
+        # The article already passed the ingest recency window; a missing field
+        # is an extraction gap, not evidence the round is old.
+        assert filters.is_recent(_event(announced_date=None))
+
+
+class TestApply:
+    def test_keeps_a_good_candidate(self):
+        candidates, report = filters.apply([_event()])
+        assert len(candidates) == 1
+        assert candidates[0].market == "sf-bay-area"
+        assert report.kept == 1
+
+    def test_counts_each_rejection_reason_separately(self):
+        events = [
+            _event(company_name="NotFunding", is_funding_announcement=False),
+            _event(company_name="LowConf", extraction_confidence=0.2),
+            _event(company_name="Stale", announced_date=TODAY - timedelta(days=90)),
+            _event(company_name="Austin", hq_city="Austin"),
+            _event(company_name="Good"),
+        ]
+        candidates, report = filters.apply(events)
+
+        assert [c.event.company_name for c in candidates] == ["Good"]
+        assert report.not_funding == 1
+        assert report.low_confidence == 1
+        assert report.too_old == 1
+        assert report.wrong_geo == 1
+        assert report.input_count == 5
+
+    def test_collapses_the_same_company_appearing_twice_in_one_run(self):
+        events = [
+            _event(company_name="Acme", company_domain="acme.com"),
+            _event(company_name="Acme Inc.", company_domain="acme.com"),
+        ]
+        candidates, report = filters.apply(events)
+
+        assert len(candidates) == 1
+        assert report.duplicate == 1
+
+    def test_dedupes_by_normalized_name_when_domain_is_unknown(self):
+        events = [
+            _event(company_name="Acme Labs", company_domain=None),
+            _event(company_name="Acme Labs, Inc.", company_domain=None),
+        ]
+        candidates, _ = filters.apply(events)
+        assert len(candidates) == 1
+
+    def test_suppresses_a_company_posted_inside_the_dedupe_window(self):
+        seen = {"acme.com": TODAY - timedelta(days=5)}
+        candidates, report = filters.apply(
+            [_event()], seen_keys=seen, dedupe_window_days=30
+        )
+        assert candidates == []
+        assert report.recently_seen == 1
+
+    def test_allows_a_company_whose_suppression_window_has_expired(self):
+        seen = {"acme.com": TODAY - timedelta(days=45)}
+        candidates, _ = filters.apply([_event()], seen_keys=seen, dedupe_window_days=30)
+        assert len(candidates) == 1
+
+    def test_boundary_of_the_suppression_window_still_suppresses(self):
+        seen = {"acme.com": TODAY - timedelta(days=30)}
+        candidates, _ = filters.apply([_event()], seen_keys=seen, dedupe_window_days=30)
+        assert candidates == []
+
+    def test_passing_no_seen_map_skips_suppression_entirely(self):
+        # Dry runs pass None so you can see the full unfiltered picture.
+        candidates, report = filters.apply([_event()], seen_keys=None)
+        assert len(candidates) == 1
+        assert report.recently_seen == 0
+
+    def test_records_examples_of_what_was_rejected(self):
+        _, report = filters.apply([_event(company_name="Austin Co", hq_city="Austin")])
+        assert any("Austin Co" in note for note in report.rejected_examples)
+
+    def test_empty_input(self):
+        candidates, report = filters.apply([])
+        assert candidates == []
+        assert report.input_count == 0
+
+
+class TestNormalizedSeenKeys:
+    def test_domains_pass_through_unchanged(self):
+        result = filters.normalized_seen_keys([("acme.com", date(2026, 7, 1))])
+        assert result == {"acme.com": date(2026, 7, 1)}
+
+    def test_bare_names_are_normalized(self):
+        result = filters.normalized_seen_keys([("Acme Inc.", date(2026, 7, 1))])
+        assert "acme" in result
+
+    def test_keeps_the_most_recent_sighting(self):
+        result = filters.normalized_seen_keys(
+            [("acme.com", date(2026, 6, 1)), ("acme.com", date(2026, 7, 1))]
+        )
+        assert result["acme.com"] == date(2026, 7, 1)
