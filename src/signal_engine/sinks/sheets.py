@@ -107,7 +107,10 @@ class SheetsClient:
 
         # A brand-new spreadsheet ships with a "Sheet1" that would otherwise
         # sit there confusing whoever opens it.
-        if "Sheet1" in existing and len(existing) > 1:
+        # Re-read: `existing` predates the tabs just created, so testing it
+        # meant the default sheet was never actually removed.
+        titles = {ws.title for ws in self._sheet.worksheets()}
+        if "Sheet1" in titles and len(titles) > 1:
             try:
                 self._sheet.del_worksheet(self._sheet.worksheet("Sheet1"))
             except Exception:  # noqa: BLE001 - cosmetic only

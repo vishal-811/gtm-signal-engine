@@ -186,13 +186,10 @@ def apply(
             report._note(event, f"announced {event.announced_date}")
             continue
 
-        market = match_market(event.hq_city, event.hq_country)
-        if market is None:
-            report.wrong_geo += 1
-            report._note(event, f"HQ {event.hq_city or 'unknown'}, {event.hq_country or '?'}")
-            continue
-
-        candidate = Candidate(event=event, market=market)
+        # Geography is decided later, in apply_geo(), once the openings check
+        # has supplied job locations. Filtering on the article's stated HQ here
+        # discarded every candidate: funding coverage almost never prints it.
+        candidate = Candidate(event=event)
         key = candidate.key
 
         # Two companies can appear twice in one run when different outlets name
@@ -214,6 +211,95 @@ def apply(
     report.kept = len(candidates)
     log.info("filters: %s", report.summary())
     return candidates, report
+
+
+def market_from_locations(locations: list[str]) -> Market | None:
+    """Resolve a market from a set of job-posting locations.
+
+    A single posting can name several cities ("Hybrid - San Francisco, New
+    York City, London"), so every location string is checked and the first
+    match wins. Country is deliberately not passed: board locations rarely
+    include one, and requiring it would reject "San Francisco, CA".
+    """
+    for location in locations:
+        market = match_market(location)
+        if market:
+            return market
+    return None
+
+
+@dataclass
+class GeoReport:
+    """Why candidates were dropped at the geography stage.
+
+    Kept separate from :class:`FilterReport` because this now runs after the
+    openings check, and because "we could not determine a location" is a very
+    different outcome from "this company is in Berlin" — conflating them hides
+    whether the pipeline is working or the data is thin.
+    """
+
+    input_count: int = 0
+    kept: int = 0
+    matched_on_jobs: int = 0
+    matched_on_article: int = 0
+    out_of_market: int = 0
+    location_unknown: int = 0
+    unknown_examples: list[str] = field(default_factory=list)
+
+    def summary(self) -> str:
+        return (
+            f"{self.input_count} candidates → {self.kept} in-market "
+            f"({self.matched_on_jobs} via job locations, "
+            f"{self.matched_on_article} via article HQ) · "
+            f"{self.out_of_market} elsewhere · "
+            f"{self.location_unknown} location unknown"
+        )
+
+
+def apply_geo(candidates: list[Candidate]) -> tuple[list[Candidate], GeoReport]:
+    """Resolve each candidate's market and keep only the in-market ones.
+
+    Runs *after* the openings check, because that is where the location data
+    actually is. Funding articles routinely omit a company's headquarters —
+    measured across a full run, every single extracted round had ``hq_city``
+    of None — so filtering on the article alone discarded everything.
+
+    Job locations are preferred over the article's stated HQ: they are more
+    reliable, and where the roles are is what matters for placing engineers.
+    """
+    report = GeoReport(input_count=len(candidates))
+    kept: list[Candidate] = []
+
+    for candidate in candidates:
+        openings = candidate.openings
+        locations = openings.locations if openings else []
+
+        market = market_from_locations(locations)
+        if market:
+            report.matched_on_jobs += 1
+        else:
+            market = match_market(candidate.event.hq_city, candidate.event.hq_country)
+            if market:
+                report.matched_on_article += 1
+
+        if market:
+            candidate.market = market
+            kept.append(candidate)
+            continue
+
+        # Distinguish "definitely elsewhere" from "no signal at all". The first
+        # is a correct rejection; a lot of the second means the openings stage
+        # is failing to find boards, which is a different problem.
+        if locations or candidate.event.hq_city:
+            report.out_of_market += 1
+        else:
+            report.location_unknown += 1
+            if len(report.unknown_examples) < 15:
+                report.unknown_examples.append(candidate.event.company_name)
+
+    report.kept = len(kept)
+    log.info("geo: %s", report.summary())
+    return kept, report
 
 
 def normalized_seen_keys(rows: list[tuple[str, date]]) -> dict[str, date]:

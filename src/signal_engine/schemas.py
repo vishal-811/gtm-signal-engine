@@ -160,6 +160,11 @@ class OpeningsResult(BaseModel):
     eng_role_count: int = 0
     total_role_count: int = 0
     sample_titles: list[str] = Field(default_factory=list)
+    # Where the engineering roles actually are. This is the geography signal
+    # the pipeline filters on: funding articles routinely omit a company's HQ,
+    # but a job board always says where it is hiring — and where the roles are
+    # is what actually matters for placing engineers.
+    locations: list[str] = Field(default_factory=list)
     newest_post_date: datetime | None = None
 
 

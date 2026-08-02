@@ -124,7 +124,9 @@ class TestApply:
     def test_keeps_a_good_candidate(self):
         candidates, report = filters.apply([_event()])
         assert len(candidates) == 1
-        assert candidates[0].market == "sf-bay-area"
+        # Market is no longer decided here — apply_geo() sets it after the
+        # openings check, because the article rarely states a location.
+        assert candidates[0].market is None
         assert report.kept == 1
 
     def test_counts_each_rejection_reason_separately(self):
@@ -132,7 +134,6 @@ class TestApply:
             _event(company_name="NotFunding", is_funding_announcement=False),
             _event(company_name="LowConf", extraction_confidence=0.2),
             _event(company_name="Stale", announced_date=TODAY - timedelta(days=90)),
-            _event(company_name="Austin", hq_city="Austin"),
             _event(company_name="Good"),
         ]
         candidates, report = filters.apply(events)
@@ -141,8 +142,7 @@ class TestApply:
         assert report.not_funding == 1
         assert report.low_confidence == 1
         assert report.too_old == 1
-        assert report.wrong_geo == 1
-        assert report.input_count == 5
+        assert report.input_count == 4
 
     def test_collapses_the_same_company_appearing_twice_in_one_run(self):
         events = [
@@ -187,8 +187,10 @@ class TestApply:
         assert report.recently_seen == 0
 
     def test_records_examples_of_what_was_rejected(self):
-        _, report = filters.apply([_event(company_name="Austin Co", hq_city="Austin")])
-        assert any("Austin Co" in note for note in report.rejected_examples)
+        _, report = filters.apply(
+            [_event(company_name="Shaky Co", extraction_confidence=0.1)]
+        )
+        assert any("Shaky Co" in note for note in report.rejected_examples)
 
     def test_empty_input(self):
         candidates, report = filters.apply([])
@@ -210,3 +212,83 @@ class TestNormalizedSeenKeys:
             [("acme.com", date(2026, 6, 1)), ("acme.com", date(2026, 7, 1))]
         )
         assert result["acme.com"] == date(2026, 7, 1)
+
+
+class TestApplyGeo:
+    """Geography now resolves from ATS job locations, because funding articles
+    almost never print a company's HQ — a full run measured zero out of 66."""
+
+    def _candidate(self, locations=None, hq_city=None):
+        from signal_engine.schemas import Candidate, OpeningsResult
+
+        c = Candidate(event=_event(hq_city=hq_city))
+        if locations is not None:
+            c.openings = OpeningsResult(status="verified", locations=locations)
+        return c
+
+    def test_matches_on_a_job_location(self):
+        kept, report = filters.apply_geo(
+            [self._candidate(locations=["Hybrid - San Francisco, New York City"])]
+        )
+        assert len(kept) == 1
+        assert kept[0].market == "sf-bay-area"
+        assert report.matched_on_jobs == 1
+
+    def test_checks_every_location_not_just_the_first(self):
+        kept, _ = filters.apply_geo(
+            [self._candidate(locations=["Berlin", "Tokyo", "Bengaluru"])]
+        )
+        assert kept and kept[0].market == "bengaluru"
+
+    def test_falls_back_to_the_article_hq(self):
+        kept, report = filters.apply_geo(
+            [self._candidate(locations=[], hq_city="New York")]
+        )
+        assert len(kept) == 1
+        assert kept[0].market == "nyc-metro"
+        assert report.matched_on_article == 1
+
+    def test_job_locations_win_over_the_article(self):
+        # The board is the more reliable source, and where the roles are is
+        # what matters for placing engineers.
+        kept, report = filters.apply_geo(
+            [self._candidate(locations=["Bengaluru"], hq_city="New York")]
+        )
+        assert kept[0].market == "bengaluru"
+        assert report.matched_on_jobs == 1
+
+    def test_out_of_market_is_dropped(self):
+        kept, report = filters.apply_geo([self._candidate(locations=["Berlin"])])
+        assert kept == []
+        assert report.out_of_market == 1
+        assert report.location_unknown == 0
+
+    def test_unknown_location_is_counted_separately_from_out_of_market(self):
+        # A pile of "unknown" means the openings stage is failing to find
+        # boards, which is a different problem from genuinely foreign companies.
+        kept, report = filters.apply_geo([self._candidate(locations=[])])
+        assert kept == []
+        assert report.location_unknown == 1
+        assert report.out_of_market == 0
+        assert report.unknown_examples
+
+    def test_candidate_with_no_openings_at_all(self):
+        from signal_engine.schemas import Candidate
+
+        kept, report = filters.apply_geo([Candidate(event=_event(hq_city=None))])
+        assert kept == [] and report.location_unknown == 1
+
+    def test_empty_input(self):
+        kept, report = filters.apply_geo([])
+        assert kept == [] and report.input_count == 0
+
+
+class TestMarketFromLocations:
+    def test_returns_none_for_empty(self):
+        assert filters.market_from_locations([]) is None
+
+    def test_handles_remote_prefixes(self):
+        assert filters.market_from_locations(["Remote - San Francisco"]) == "sf-bay-area"
+
+    def test_ignores_unmatched_locations(self):
+        assert filters.market_from_locations(["Remote - EMEA", "Singapore"]) is None

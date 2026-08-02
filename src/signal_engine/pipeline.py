@@ -30,6 +30,7 @@ class RunResult:
     posted: list[Candidate] = field(default_factory=list)
     all_scored: list[Candidate] = field(default_factory=list)
     filter_report: filters.FilterReport | None = None
+    geo_report: filters.GeoReport | None = None
     feed_results: list[rss.FeedResult] = field(default_factory=list)
     sheet_url: str | None = None
 
@@ -85,7 +86,6 @@ def run(
 
     # ── 3. Filter ─────────────────────────────────────────────────────────────
     candidates, report = filters.apply(events, seen_keys=seen_keys)
-    stats.passed_filters = len(candidates)
 
     if not candidates:
         log.info("no candidates survived filtering")
@@ -97,6 +97,10 @@ def run(
     candidates = enrich.enrich_all(candidates)
 
     # ── 5. Verify openings ────────────────────────────────────────────────────
+    # Runs before the geography filter, because the job board is where the
+    # location data actually lives. Funding articles almost never state a
+    # company's HQ — a full run measured zero out of sixty-six — so filtering
+    # on the article first discarded every candidate.
     if skip_openings:
         log.info("skipping openings verification (--skip-openings)")
     else:
@@ -123,17 +127,28 @@ def run(
         if sheets_client and newly_discovered:
             sheets_client.upsert_ats_cache(newly_discovered)
 
-    # ── 6. Score ──────────────────────────────────────────────────────────────
+    # ── 6. Geography ──────────────────────────────────────────────────────────
+    candidates, geo_report = filters.apply_geo(candidates)
+    stats.passed_filters = len(candidates)
+    if not candidates:
+        log.info("no candidates are in a target market")
+        return _finish(
+            stats, [], [], report, feed_results, sheets_client, run_date, dry_run,
+            geo_report=geo_report,
+        )
+
+    # ── 7. Score ──────────────────────────────────────────────────────────────
     scored = score.score_all(candidates)
     stats.scored = len(scored)
     passing = [c for c in scored if score.above_threshold(c)]
 
-    # ── 7. Draft (threshold-passers only) ─────────────────────────────────────
+    # ── 8. Draft (threshold-passers only) ─────────────────────────────────────
     passing = draft.draft_all(passing)
     stats.posted = len(passing)
 
     return _finish(
-        stats, passing, scored, report, feed_results, sheets_client, run_date, dry_run
+        stats, passing, scored, report, feed_results, sheets_client, run_date,
+        dry_run, geo_report=geo_report,
     )
 
 
@@ -146,6 +161,7 @@ def _finish(
     sheets_client,
     run_date: date,
     dry_run: bool,
+    geo_report: filters.GeoReport | None = None,
 ) -> RunResult:
     """Publish (unless dry) and close out run accounting."""
     stats.input_tokens = llm.usage.input_tokens
@@ -188,6 +204,7 @@ def _finish(
         posted=passing,
         all_scored=scored,
         filter_report=report,
+        geo_report=geo_report,
         feed_results=feed_results,
         sheet_url=sheet_url,
     )

@@ -543,6 +543,14 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     if result.filter_report:
         console.print(f"  [dim]{result.filter_report.summary()}[/dim]")
+    if result.geo_report:
+        console.print(f"  [dim]{result.geo_report.summary()}[/dim]")
+        if result.geo_report.location_unknown:
+            names = ", ".join(result.geo_report.unknown_examples[:8])
+            console.print(
+                f"  [yellow]location unknown for "
+                f"{result.geo_report.location_unknown}:[/yellow] [dim]{names}[/dim]"
+            )
 
     if result.all_scored:
         rubric = config.rubric()

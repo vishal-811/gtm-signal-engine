@@ -65,8 +65,7 @@ def render_candidate(candidate: Candidate) -> str:
         f"Domain: {event.company_domain or 'unknown'}",
         f"What they do: {event.one_line_description}",
         f"Sector: {event.sector}",
-        f"HQ: {event.hq_city or 'unknown'}, {event.hq_country or 'unknown'}",
-        f"Matched target market: {candidate.market or 'none'}",
+        f"HQ stated in the article: {event.hq_city or 'not stated'}",
         "</company>",
         "",
         "<funding>",
@@ -79,7 +78,31 @@ def render_candidate(candidate: Candidate) -> str:
         "",
     ]
 
+    # Geography, stated before the openings block because the scorer needs to
+    # know the market was *verified* — from the job board, not the article.
+    # Without this the model reads "HQ: unknown" and scores geo_match 0 for a
+    # company the pipeline just confirmed is hiring in San Francisco.
+    lines += ["", "<geography>"]
+    if candidate.market:
+        lines.append(f"CONFIRMED target market: {candidate.market}")
+        locations = candidate.openings.locations if candidate.openings else []
+        if locations:
+            lines.append(
+                "Established from the locations on their live job board, which "
+                "is more reliable than a press mention:"
+            )
+            lines.extend(f"  - {loc}" for loc in locations[:8])
+        else:
+            lines.append("Established from the company HQ stated in the article.")
+        lines.append(
+            "Do not mark this down for an unstated HQ — the market is verified."
+        )
+    else:
+        lines.append("No target market could be confirmed.")
+    lines.append("</geography>")
+
     openings = candidate.openings
+    lines += [""]
     lines.append("<engineering_openings>")
     if openings is None or openings.status == "unverified":
         lines.append(

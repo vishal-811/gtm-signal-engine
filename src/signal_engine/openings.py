@@ -357,8 +357,23 @@ def check(
         eng_role_count=len(eng),
         total_role_count=len(postings),
         sample_titles=[p.title for p in eng[:_MAX_SAMPLE_TITLES]],
+        locations=_distinct_locations(eng),
         newest_post_date=max(dates) if dates else None,
     )
+
+
+def _distinct_locations(postings: list[JobPosting], limit: int = 12) -> list[str]:
+    """Unique, order-preserving locations across the engineering roles."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for posting in postings:
+        location = (posting.location or "").strip()
+        if location and location.lower() not in seen:
+            seen.add(location.lower())
+            out.append(location)
+        if len(out) >= limit:
+            break
+    return out
 
 
 def check_many(

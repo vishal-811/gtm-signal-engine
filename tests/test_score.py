@@ -163,3 +163,55 @@ class TestRenderCandidate:
         assert "$20,000,000" in rendered
         assert "series-a" in rendered
         assert "San Francisco" in rendered
+
+
+class TestGeographyBlock:
+    """The geo filter matches on job-board locations, so the scorer has to see
+    the same evidence. Without it the model reads an unstated HQ and scores
+    geo_match 0 for a company the pipeline just verified is hiring in SF —
+    observed live, costing 0.75 composite points."""
+
+    def _candidate(self, market=None, locations=None):
+        from signal_engine.schemas import Candidate, FundingEvent, OpeningsResult
+
+        event = FundingEvent(
+            is_funding_announcement=True,
+            company_name="Simile",
+            round_stage="series-b",
+            sector="behavioral AI",
+            one_line_description="x",
+            hq_city=None,
+            source_url="https://x.com/a",
+            extraction_confidence=0.9,
+        )
+        c = Candidate(event=event, market=market)
+        c.openings = OpeningsResult(
+            status="verified", eng_role_count=7, locations=locations or []
+        )
+        return c
+
+    def test_states_the_market_as_confirmed(self):
+        rendered = score.render_candidate(
+            self._candidate(market="sf-bay-area", locations=["Hybrid - San Francisco"])
+        )
+        assert "CONFIRMED target market: sf-bay-area" in rendered
+
+    def test_shows_the_job_locations_as_the_evidence(self):
+        rendered = score.render_candidate(
+            self._candidate(market="sf-bay-area", locations=["Hybrid - San Francisco"])
+        )
+        assert "Hybrid - San Francisco" in rendered
+
+    def test_tells_the_model_not_to_penalise_an_unstated_hq(self):
+        rendered = score.render_candidate(
+            self._candidate(market="sf-bay-area", locations=["Remote - US"])
+        )
+        assert "Do not mark this down for an unstated HQ" in rendered
+
+    def test_an_unstated_hq_is_labelled_as_such_not_as_unknown_location(self):
+        rendered = score.render_candidate(self._candidate(market="nyc-metro"))
+        assert "not stated" in rendered
+
+    def test_no_market_is_reported_honestly(self):
+        rendered = score.render_candidate(self._candidate(market=None))
+        assert "No target market could be confirmed" in rendered
