@@ -42,6 +42,17 @@ feeds:
   - name: YourStory
     url: https://yourstory.com/feed
 
+  # ── Publisher funding TAGS — TESTED AND REJECTED ────────────────────────────
+  # These looked ideal on density (Inc42 14 single-round headlines per fetch,
+  # YourStory 14, TechCrunch 9 — against 1-2 for a general feed) but they are
+  # archives, not live feeds. Measured newest item, 2026-08-02:
+  #   inc42.com/tag/funding/feed/        -> Jul 2023   (3 years stale)
+  #   techcrunch.com/tag/funding/feed/   -> 25 days
+  #   techcrunch.com/tag/fundraising/    -> 31 days
+  #   yourstory.com/category/funding/    -> 56 hours
+  # Every item falls outside the 36h window. Density means nothing without
+  # freshness. Listed here so nobody re-adds them on the strength of density.
+
   # ── Funding-dedicated publishers ────────────────────────────────────────────
   # Added because Google News RSS carries titles only (see below): its items
   # average ~84 characters of summary versus ~1,100 from a direct publisher.
@@ -81,6 +92,30 @@ feeds:
 
   - name: GNews - Bengaluru
     url: https://news.google.com/rss/search?q=startup+funding+Bengaluru+OR+Bangalore+raises+when:2d&hl=en-IN&gl=IN&ceid=IN:en
+
+  # Single-round phrasings. Deliberately narrow: a query like "startup funding"
+  # returns mostly roundups and market-stat pieces, which the extractor then
+  # correctly discards at a cost of one LLM call each.
+  - name: GNews - raises round
+    url: https://news.google.com/rss/search?q=startup+%22raises%22+%22round%22+led+by+when:2d&hl=en-US&gl=US&ceid=US:en
+
+  - name: GNews - secures funding
+    url: https://news.google.com/rss/search?q=startup+%22secures%22+funding+when:2d&hl=en-US&gl=US&ceid=US:en
+
+  - name: GNews - pre-seed
+    url: https://news.google.com/rss/search?q=startup+%22pre-seed%22+OR+%22pre+seed%22+raises+when:2d&hl=en-US&gl=US&ceid=US:en
+
+  - name: GNews - devtools/infra
+    url: https://news.google.com/rss/search?q=%22developer+tools%22+OR+infrastructure+startup+raises+when:2d&hl=en-US&gl=US&ceid=US:en
+
+  - name: GNews - fintech
+    url: https://news.google.com/rss/search?q=fintech+startup+raises+funding+when:2d&hl=en-US&gl=US&ceid=US:en
+
+  - name: GNews - India crore
+    url: https://news.google.com/rss/search?q=startup+raises+crore+funding+when:2d&hl=en-IN&gl=IN&ceid=IN:en
+
+  - name: GNews - India seed
+    url: https://news.google.com/rss/search?q=Indian+startup+%22seed+round%22+OR+%22Series+A%22+raises+when:2d&hl=en-IN&gl=IN&ceid=IN:en
 
   # ── Hacker News ─────────────────────────────────────────────────────────────
   # Off by design, verified 2026-08-02: this query returns 50 items whose newest

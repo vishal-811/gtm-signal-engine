@@ -219,6 +219,22 @@ def cmd_check_feeds(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def cmd_format_sheet(_args: argparse.Namespace) -> int:
+    """Re-apply column order and styling to an existing sheet."""
+    from .sinks.sheets import SheetsClient
+
+    client = SheetsClient()
+    client.ensure_tabs()
+    moved = client.migrate_shortlist_columns()
+    client.format_shortlist()
+    console.print(
+        f"\n[green]Sheet formatted.[/green] "
+        f"{moved} existing row(s) remapped to the current column order."
+    )
+    console.print(f"[dim]{client.url}[/dim]\n")
+    return 0
+
+
 # ── check-endpoint ────────────────────────────────────────────────────────────
 
 
@@ -644,6 +660,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="also print the N most recent deduped article titles",
     )
     check.set_defaults(func=cmd_check_feeds)
+
+    fmt = subparsers.add_parser(
+        "format-sheet",
+        help="re-apply the shortlist column order and styling (safe to re-run)",
+    )
+    fmt.set_defaults(func=cmd_format_sheet)
 
     endpoint_cmd = subparsers.add_parser(
         "check-endpoint",

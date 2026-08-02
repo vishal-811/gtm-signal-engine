@@ -30,14 +30,30 @@ SEEN = "seen"
 ATS_CACHE = "ats_cache"
 RUNS = "runs"
 
+# Ordered for reading left-to-right the way the decision is actually made:
+# is it worth my time (score, market, roles), what is the pitch (signal, email),
+# then the evidence, then the raw audit trail.
 SHORTLIST_HEADERS = [
-    "run_date", "rank", "company", "domain", "market", "score",
-    "round_stage", "amount_usd", "announced", "investors", "hq", "sector",
-    "openings_status", "eng_roles", "total_roles", "newest_post",
-    "sample_titles", "board_url", "key_signal", "risks",
-    "criteria_breakdown", "email_subject", "email_body",
-    "personalization_hook", "source_url",
+    # decide
+    "run_date", "rank", "score", "company", "market", "eng_roles",
+    "round_stage", "amount_usd", "sector",
+    # act
+    "key_signal", "email_subject", "email_body",
+    # verify
+    "openings_status", "sample_titles", "newest_post", "board_url", "risks",
+    # context
+    "announced", "investors", "hq", "domain", "total_roles",
+    # audit
+    "criteria_breakdown", "personalization_hook", "source_url",
 ]
+
+# Columns holding prose, which need wrapping and a wide-but-bounded width.
+_WIDE_COLUMNS = {
+    "key_signal": 320, "email_body": 420, "email_subject": 200,
+    "sample_titles": 300, "risks": 300, "criteria_breakdown": 400,
+    "board_url": 220, "source_url": 220, "company": 150,
+}
+_NARROW_DEFAULT = 90
 SEEN_HEADERS = ["key", "company", "first_seen", "last_seen", "last_score", "times_posted"]
 ATS_CACHE_HEADERS = ["domain", "provider", "board_token", "resolved_at"]
 RUNS_HEADERS = [
@@ -117,6 +133,218 @@ class SheetsClient:
                 pass
 
         self._tabs_ready = True
+
+        # Style the deliverable the first time it is created. Doing it here
+        # rather than per-run means the styling calls cost nothing nightly.
+        if SHORTLIST not in existing:
+            try:
+                self.format_shortlist()
+            except Exception:  # noqa: BLE001 - cosmetic; never fail a run for it
+                log.warning("could not apply shortlist formatting", exc_info=True)
+
+    # ── presentation ──────────────────────────────────────────────────────────
+
+    def format_shortlist(self) -> None:
+        """Make the shortlist tab readable at a glance.
+
+        Applied once, on demand — not on every run, since these are
+        spreadsheet-level style calls and re-issuing them each night would
+        waste API quota for no change.
+        """
+        ws = self._tab(SHORTLIST)
+        sheet_id = ws.id
+        last_col = len(SHORTLIST_HEADERS)
+
+        requests: list[dict[str, Any]] = [
+            # Header row and the company column stay visible while scrolling
+            # through 25 columns of detail.
+            {
+                "updateSheetProperties": {
+                    "properties": {
+                        "sheetId": sheet_id,
+                        "gridProperties": {"frozenRowCount": 1, "frozenColumnCount": 4},
+                    },
+                    "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
+                }
+            },
+            {
+                "repeatCell": {
+                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
+                    "cell": {
+                        "userEnteredFormat": {
+                            "backgroundColor": {"red": 0.17, "green": 0.24, "blue": 0.31},
+                            "textFormat": {
+                                "bold": True,
+                                "foregroundColor": {"red": 1, "green": 1, "blue": 1},
+                            },
+                            "verticalAlignment": "MIDDLE",
+                        }
+                    },
+                    "fields": "userEnteredFormat(backgroundColor,textFormat,verticalAlignment)",
+                }
+            },
+            # Top-align every data row: with wrapped prose in some columns and
+            # short values in others, middle alignment looks ragged.
+            {
+                "repeatCell": {
+                    "range": {"sheetId": sheet_id, "startRowIndex": 1},
+                    "cell": {
+                        "userEnteredFormat": {
+                            "verticalAlignment": "TOP",
+                            "wrapStrategy": "CLIP",
+                        }
+                    },
+                    "fields": "userEnteredFormat(verticalAlignment,wrapStrategy)",
+                }
+            },
+        ]
+
+        for index, name in enumerate(SHORTLIST_HEADERS):
+            width = _WIDE_COLUMNS.get(name, _NARROW_DEFAULT)
+            requests.append(
+                {
+                    "updateDimensionProperties": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "dimension": "COLUMNS",
+                            "startIndex": index,
+                            "endIndex": index + 1,
+                        },
+                        "properties": {"pixelSize": width},
+                        "fields": "pixelSize",
+                    }
+                }
+            )
+            if name in _WIDE_COLUMNS and name not in ("board_url", "source_url"):
+                requests.append(
+                    {
+                        "repeatCell": {
+                            "range": {
+                                "sheetId": sheet_id,
+                                "startRowIndex": 1,
+                                "startColumnIndex": index,
+                                "endColumnIndex": index + 1,
+                            },
+                            "cell": {"userEnteredFormat": {"wrapStrategy": "WRAP"}},
+                            "fields": "userEnteredFormat.wrapStrategy",
+                        }
+                    }
+                )
+
+        def col(name: str) -> int:
+            return SHORTLIST_HEADERS.index(name)
+
+        # Money as money, score to two places — otherwise 200000000 and
+        # 3.6500000000000004 both land in the sheet verbatim.
+        for name, pattern in (("amount_usd", "$#,##0"), ("score", "0.00")):
+            index = col(name)
+            requests.append(
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": 1,
+                            "startColumnIndex": index,
+                            "endColumnIndex": index + 1,
+                        },
+                        "cell": {
+                            "userEnteredFormat": {
+                                "numberFormat": {"type": "NUMBER", "pattern": pattern}
+                            }
+                        },
+                        "fields": "userEnteredFormat.numberFormat",
+                    }
+                }
+            )
+
+        # Colour the score so the strong leads are findable without reading.
+        score_range = {
+            "sheetId": sheet_id,
+            "startRowIndex": 1,
+            "startColumnIndex": col("score"),
+            "endColumnIndex": col("score") + 1,
+        }
+        requests.append(
+            {
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [score_range],
+                        "gradientRule": {
+                            "minpoint": {
+                                "color": {"red": 0.96, "green": 0.80, "blue": 0.80},
+                                "type": "NUMBER",
+                                "value": "2",
+                            },
+                            "maxpoint": {
+                                "color": {"red": 0.72, "green": 0.88, "blue": 0.75},
+                                "type": "NUMBER",
+                                "value": "5",
+                            },
+                        },
+                    },
+                    "index": 0,
+                }
+            }
+        )
+        # Grey out rows whose openings could not be verified — present, but
+        # visibly weaker evidence than a confirmed board.
+        requests.append(
+            {
+                "addConditionalFormatRule": {
+                    "rule": {
+                        "ranges": [
+                            {
+                                "sheetId": sheet_id,
+                                "startRowIndex": 1,
+                                "startColumnIndex": 0,
+                                "endColumnIndex": last_col,
+                            }
+                        ],
+                        "booleanRule": {
+                            "condition": {
+                                "type": "CUSTOM_FORMULA",
+                                "values": [{"userEnteredValue": '=$M2="unverified"'}],
+                            },
+                            "format": {
+                                "textFormat": {
+                                    "foregroundColor": {
+                                        "red": 0.5, "green": 0.5, "blue": 0.5
+                                    }
+                                }
+                            },
+                        },
+                    },
+                    "index": 1,
+                }
+            }
+        )
+
+        self._sheet.batch_update({"requests": requests})
+        log.info("applied shortlist formatting")
+
+    def migrate_shortlist_columns(self) -> int:
+        """Rewrite existing rows into the current column order.
+
+        The header order changed after rows already existed. Rewriting by
+        column *name* preserves them; a blind reorder would silently shift
+        every value one column left.
+        """
+        ws = self._tab(SHORTLIST)
+        values = ws.get_all_values()
+        if not values:
+            return 0
+        old_headers = values[0]
+        if old_headers == SHORTLIST_HEADERS:
+            return 0
+
+        records = [dict(zip(old_headers, row)) for row in values[1:]]
+        ws.clear()
+        rows = [SHORTLIST_HEADERS] + [
+            [r.get(name, "") for name in SHORTLIST_HEADERS] for r in records
+        ]
+        ws.update(values=rows, range_name="A1", value_input_option="RAW")
+        log.info("migrated %d shortlist row(s) to the new column order", len(records))
+        return len(records)
 
     def _tab(self, title: str):
         self.ensure_tabs()
@@ -251,47 +479,67 @@ class SheetsClient:
 # ── row rendering ─────────────────────────────────────────────────────────────
 
 
+def _location_summary(candidate: Candidate) -> str:
+    """Human-readable location for the sheet.
+
+    Prefers the job-board locations, because those are what the geography
+    filter actually matched on. Falls back to the article's stated HQ, which
+    is usually blank.
+    """
+    openings = candidate.openings
+    if openings and openings.locations:
+        return ", ".join(openings.locations[:3])
+    event = candidate.event
+    parts = [p for p in (event.hq_city, event.hq_country) if p]
+    return ", ".join(parts)
+
+
 def _shortlist_row(candidate: Candidate, rank: int, run_date: date) -> list[Any]:
+    """One shortlist row, keyed by header name so the order can change in one
+    place without silently shifting every value."""
     event = candidate.event
     openings = candidate.openings
     score = candidate.score
     outreach = candidate.outreach
 
-    breakdown = ""
-    if score:
-        breakdown = " | ".join(
-            f"{c.id} {c.score:.1f}: {c.reason}" for c in score.criteria
-        )
-
-    return [
-        run_date.isoformat(),
-        rank,
-        event.company_name,
-        event.company_domain or "",
-        candidate.market or "",
-        candidate.composite if candidate.composite is not None else "",
-        event.round_stage,
-        event.amount_usd or "",
-        event.announced_date.isoformat() if event.announced_date else "",
-        ", ".join(event.investors),
-        f"{event.hq_city or ''}, {event.hq_country or ''}".strip(", "),
-        event.sector,
-        openings.status if openings else "",
-        openings.eng_role_count if openings else "",
-        openings.total_role_count if openings else "",
-        openings.newest_post_date.date().isoformat()
-        if openings and openings.newest_post_date
-        else "",
-        ", ".join(openings.sample_titles) if openings else "",
-        (openings.board_url or "") if openings else "",
-        score.key_signal if score else "",
-        "; ".join(score.risks) if score else "",
-        breakdown,
-        outreach.subject if outreach else "",
-        outreach.body if outreach else "",
-        outreach.personalization_hook if outreach else "",
-        event.source_url,
-    ]
+    values: dict[str, Any] = {
+        "run_date": run_date.isoformat(),
+        "rank": rank,
+        "score": candidate.composite if candidate.composite is not None else "",
+        "company": event.company_name,
+        "market": candidate.market or "",
+        "eng_roles": openings.eng_role_count if openings else "",
+        "round_stage": event.round_stage,
+        "amount_usd": event.amount_usd or "",
+        "sector": event.sector,
+        "key_signal": score.key_signal if score else "",
+        "email_subject": outreach.subject if outreach else "",
+        "email_body": outreach.body if outreach else "",
+        "openings_status": openings.status if openings else "",
+        "sample_titles": ", ".join(openings.sample_titles) if openings else "",
+        "newest_post": (
+            openings.newest_post_date.date().isoformat()
+            if openings and openings.newest_post_date
+            else ""
+        ),
+        "board_url": (openings.board_url or "") if openings else "",
+        "risks": "; ".join(score.risks) if score else "",
+        "announced": event.announced_date.isoformat() if event.announced_date else "",
+        "investors": ", ".join(event.investors),
+        # Job-board locations where we have them — that is what the market was
+        # actually matched on — falling back to whatever the article stated.
+        "hq": _location_summary(candidate),
+        "domain": event.company_domain or "",
+        "total_roles": openings.total_role_count if openings else "",
+        "criteria_breakdown": (
+            " | ".join(f"{c.id} {c.score:.1f}: {c.reason}" for c in score.criteria)
+            if score
+            else ""
+        ),
+        "personalization_hook": outreach.personalization_hook if outreach else "",
+        "source_url": event.source_url,
+    }
+    return [values[name] for name in SHORTLIST_HEADERS]
 
 
 def _parse_date(raw: str) -> date | None:
