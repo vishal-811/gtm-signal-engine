@@ -471,7 +471,12 @@ def _call_prompt_mode(
     content = choice.message.content or ""
     try:
         return _parse_prompt_mode(content, schema, label)
-    except Exception as first_error:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001
+        # Bind the *message* here, not the exception. Python unbinds the `as`
+        # name when the except block ends, so reading it below raised NameError
+        # and killed the retry that is the whole point of this branch — a
+        # batch of articles was discarded every time the model fumbled its JSON.
+        first_error = str(exc)[:200]
         log.info("%s: reply was not valid JSON, retrying once", label)
 
     retry = _base_kwargs(instructed, user, effort, max_tokens)
@@ -480,8 +485,7 @@ def _call_prompt_mode(
         {
             "role": "user",
             "content": (
-                "That reply could not be parsed as JSON: "
-                f"{str(first_error)[:200]}\n\n"
+                f"That reply could not be parsed as JSON: {first_error}\n\n"
                 "Reply again with only the raw JSON object. No prose, no code "
                 "fences."
             ),

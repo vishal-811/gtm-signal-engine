@@ -21,6 +21,8 @@ import time
 from datetime import date, datetime
 from typing import Any
 
+from gspread.utils import rowcol_to_a1
+
 from ..config import settings
 from ..schemas import AtsProvider, Candidate, RunStats
 
@@ -407,18 +409,86 @@ class SheetsClient:
 
     # ── writes ────────────────────────────────────────────────────────────────
 
-    def append_shortlist(self, candidates: list[Candidate], run_date: date) -> int:
+    def append_shortlist(
+        self, candidates: list[Candidate], run_date: date
+    ) -> tuple[int, int]:
+        """Write the shortlist, refreshing rows already present.
+
+        Upsert rather than append. A blind append duplicated any company two
+        runs both surfaced — and re-running a backfill duplicated the whole
+        sheet. The refreshed row is the useful one anyway: role counts and
+        board contents move between runs, so the newer read supersedes.
+
+        Identity is the resolved board URL, falling back to domain and then to
+        the normalized company key. Board URL is preferred because outlets
+        disagree about domains — Etched arrived as both ``etched.com`` and
+        ``etched.ai`` — while one board is unambiguously one employer.
+
+        Returns ``(inserted, updated)``.
+        """
         if not candidates:
-            return 0
-        rows = [
-            _shortlist_row(candidate, rank, run_date)
-            for rank, candidate in enumerate(candidates, start=1)
-        ]
-        _with_retry(
-            lambda: self._tab(SHORTLIST).append_rows(rows, value_input_option="RAW"),
-            label="append_shortlist",
+            return (0, 0)
+
+        worksheet = self._tab(SHORTLIST)
+        existing = _with_retry(worksheet.get_all_values, label="read_shortlist")
+        header = existing[0] if existing else list(SHORTLIST_HEADERS)
+        index = _identity_index(header, existing[1:] if existing else [])
+
+        appended: list[list[Any]] = []
+        updates: list[dict[str, Any]] = []
+        for rank, candidate in enumerate(candidates, start=1):
+            row = _shortlist_row(candidate, rank, run_date)
+            hit = next(
+                (index[k] for k in _identity_keys(candidate) if k in index), None
+            )
+            if hit is None:
+                appended.append(row)
+            else:
+                updates.append(
+                    {
+                        "range": rowcol_to_a1(hit, 1)
+                        + ":"
+                        + rowcol_to_a1(hit, len(row)),
+                        "values": [row],
+                    }
+                )
+
+        if updates:
+            _with_retry(
+                lambda: worksheet.batch_update(updates, value_input_option="RAW"),
+                label="update_shortlist",
+            )
+        if appended:
+            _with_retry(
+                lambda: worksheet.append_rows(appended, value_input_option="RAW"),
+                label="append_shortlist",
+            )
+        log.info(
+            "shortlist: %d new, %d refreshed in place", len(appended), len(updates)
         )
-        return len(rows)
+        return (len(appended), len(updates))
+
+    def dedupe_shortlist(self) -> int:
+        """Drop rows sharing an identity with an earlier row. Returns the count.
+
+        Repairs sheets written before the upsert existed. Deletes one row per
+        pass and re-reads in between: a loop that collects row numbers upfront
+        and deletes them in sequence shifts every index below the first delete,
+        which cost a real row here once.
+        """
+        removed = 0
+        while True:
+            rows = _with_retry(
+                self._tab(SHORTLIST).get_all_values, label="read_shortlist"
+            )
+            if len(rows) < 2:
+                break
+            victim = _first_duplicate_row(rows[0], rows[1:])
+            if victim is None:
+                break
+            self._tab(SHORTLIST).delete_rows(victim)
+            removed += 1
+        return removed
 
     def upsert_seen(self, candidates: list[Candidate], run_date: date) -> None:
         """Record posted companies so they are suppressed next time.
@@ -523,6 +593,62 @@ def _location_summary(candidate: Candidate) -> str:
     event = candidate.event
     parts = [p for p in (event.hq_city, event.hq_country) if p]
     return ", ".join(parts)
+
+
+def _identity_keys(candidate: Candidate) -> list[str]:
+    """Identities this candidate may already be filed under, best first.
+
+    Ordered by trust: a board URL is one employer; a domain is what an outlet
+    guessed; a name is a last resort and collides across unrelated startups.
+    """
+    keys: list[str] = []
+    board = candidate.openings.board_url if candidate.openings else None
+    if board:
+        keys.append(f"board:{board.strip().lower().rstrip('/')}")
+    if candidate.event.company_domain:
+        keys.append(f"domain:{candidate.event.company_domain.strip().lower()}")
+    if candidate.key:
+        keys.append(f"key:{candidate.key}")
+    return keys
+
+
+def _row_identity_keys(header: list[str], row: list[str]) -> list[str]:
+    """The same identities, recovered from a sheet row."""
+
+    def cell(name: str) -> str:
+        try:
+            return (row[header.index(name)] or "").strip().lower()
+        except (ValueError, IndexError):
+            return ""
+
+    keys = []
+    if board := cell("board_url"):
+        keys.append(f"board:{board.rstrip('/')}")
+    if domain := cell("domain"):
+        keys.append(f"domain:{domain}")
+    if company := cell("company"):
+        keys.append(f"key:{company}")
+    return keys
+
+
+def _identity_index(header: list[str], rows: list[list[str]]) -> dict[str, int]:
+    """Map every identity to its 1-based sheet row (header occupies row 1)."""
+    index: dict[str, int] = {}
+    for offset, row in enumerate(rows, start=2):
+        for key in _row_identity_keys(header, row):
+            index.setdefault(key, offset)
+    return index
+
+
+def _first_duplicate_row(header: list[str], rows: list[list[str]]) -> int | None:
+    """Row number of the first row whose identity an earlier row already holds."""
+    seen: set[str] = set()
+    for offset, row in enumerate(rows, start=2):
+        keys = _row_identity_keys(header, row)
+        if any(k in seen for k in keys):
+            return offset
+        seen.update(keys)
+    return None
 
 
 def _shortlist_row(candidate: Candidate, rank: int, run_date: date) -> list[Any]:

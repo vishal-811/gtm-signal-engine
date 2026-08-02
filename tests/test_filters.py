@@ -315,3 +315,64 @@ class TestMarketFromLocations:
 
     def test_remote_emea_resolves_to_europe(self):
         assert filters.market_from_locations(["Remote - EMEA"]) == "europe"
+
+
+def _cand(name, domain, board, conf=0.9, amount=None):
+    from signal_engine.schemas import Candidate, FundingEvent, OpeningsResult
+    ev = FundingEvent(
+        is_funding_announcement=True, company_name=name, company_domain=domain,
+        round_stage="seed", amount_usd=amount, investors=[], sector="ai",
+        one_line_description="x", source_url=f"https://n/{name}",
+        extraction_confidence=conf,
+    )
+    c = Candidate(event=ev)
+    c.openings = OpeningsResult(status="verified", board_url=board, eng_role_count=3)
+    return c
+
+
+def test_collapse_duplicate_boards_merges_conflicting_domains():
+    """Same board = same employer, whatever domain the article claimed.
+
+    Regression: a real run shortlisted Etched three times — etched.com,
+    etched.ai, and no domain — because dedupe keys on domain and the outlets
+    disagreed. All three pointed at one Ashby board.
+    """
+    cands = [
+        _cand("Etched", "etched.com", "https://jobs.ashbyhq.com/etched"),
+        _cand("Etched", "", "https://jobs.ashbyhq.com/etched"),
+        _cand("Etched", "etched.ai", "https://jobs.ashbyhq.com/etched"),
+        _cand("Meshy", "meshy.ai", "https://jobs.ashbyhq.com/meshy"),
+    ]
+    kept, collapsed = filters.collapse_duplicate_boards(cands)
+
+    assert collapsed == 2
+    assert [c.event.company_name for c in kept] == ["Etched", "Meshy"]
+    # Must keep a row with a real domain: the `seen` ledger keys on it, so
+    # keeping the blank one would let Etched back in tomorrow.
+    assert kept[0].event.company_domain
+
+
+def test_collapse_prefers_the_richer_row():
+    cands = [
+        _cand("Acme", "acme.com", "https://b/acme", conf=0.6, amount=None),
+        _cand("Acme", "acme.com", "https://b/acme", conf=0.95, amount=5_000_000),
+    ]
+    kept, _ = filters.collapse_duplicate_boards(cands)
+    assert kept[0].event.amount_usd == 5_000_000
+
+
+def test_collapse_never_merges_boardless_companies_by_name():
+    """Two unrelated startups share a name often enough that name is unsafe."""
+    cands = [_cand("Nova", "nova-ai.com", None), _cand("Nova", "novabank.io", None)]
+    kept, collapsed = filters.collapse_duplicate_boards(cands)
+    assert collapsed == 0 and len(kept) == 2
+
+
+def test_collapse_preserves_input_order():
+    cands = [
+        _cand("Zed", "zed.dev", "https://b/zed"),
+        _cand("Alpha", "alpha.com", "https://b/alpha"),
+        _cand("Zed", "zed.com", "https://b/zed"),
+    ]
+    kept, _ = filters.collapse_duplicate_boards(cands)
+    assert [c.event.company_name for c in kept] == ["Zed", "Alpha"]

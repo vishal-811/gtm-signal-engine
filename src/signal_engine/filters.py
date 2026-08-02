@@ -316,6 +316,66 @@ def apply_geo(candidates: list[Candidate]) -> tuple[list[Candidate], GeoReport]:
     return kept, report
 
 
+def collapse_duplicate_boards(
+    candidates: list[Candidate],
+) -> tuple[list[Candidate], int]:
+    """Merge candidates that resolved to the same ATS board.
+
+    Dedupe upstream keys on domain, which fails when outlets disagree about
+    what a company's domain is. A real run produced Etched three times over —
+    as ``etched.com``, ``etched.ai``, and with no domain at all — because each
+    looked like a different company. All three resolved to the same Ashby
+    board.
+
+    The board URL is the better identity: one board is one employer, whatever
+    a press release called them. This runs after the openings check and before
+    scoring, so a duplicate costs neither a scoring call nor a sheet row.
+
+    Kept row is the one carrying the most usable information — a real domain
+    first (it is what the ``seen`` ledger keys on, so dropping it would let the
+    company back in tomorrow), then extraction confidence.
+    """
+    by_board: dict[str, list[Candidate]] = {}
+    passthrough: list[Candidate] = []
+
+    for candidate in candidates:
+        board = candidate.openings.board_url if candidate.openings else None
+        if board:
+            by_board.setdefault(board.strip().lower(), []).append(candidate)
+        else:
+            # No board resolved: nothing to merge on. Never collapse these by
+            # name — two genuinely different startups share a name often
+            # enough that it is not a safe identity.
+            passthrough.append(candidate)
+
+    kept: list[Candidate] = list(passthrough)
+    collapsed = 0
+    for board, group in by_board.items():
+        if len(group) > 1:
+            collapsed += len(group) - 1
+            log.info(
+                "collapsed %d duplicates of %s onto one board (%s)",
+                len(group) - 1,
+                group[0].event.company_name,
+                board,
+            )
+        kept.append(max(group, key=_board_merge_rank))
+
+    # Preserve the caller's ordering; grouping above scrambles it.
+    order = {id(c): i for i, c in enumerate(candidates)}
+    kept.sort(key=lambda c: order[id(c)])
+    return kept, collapsed
+
+
+def _board_merge_rank(candidate: Candidate) -> tuple:
+    event = candidate.event
+    return (
+        bool(event.company_domain),
+        event.extraction_confidence or 0.0,
+        event.amount_usd or 0,
+    )
+
+
 def normalized_seen_keys(rows: list[tuple[str, date]]) -> dict[str, date]:
     """Build the suppression map from raw `seen` tab rows.
 

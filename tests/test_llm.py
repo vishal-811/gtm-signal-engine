@@ -13,6 +13,7 @@ import json
 import pytest
 from pydantic import BaseModel
 
+from types import SimpleNamespace
 from signal_engine import llm
 
 
@@ -184,3 +185,46 @@ class TestUnsupportedEffortDetection:
         # Misclassifying a real error as an effort problem would silently retry
         # and then surface the wrong diagnosis.
         assert not llm._is_unsupported_effort_error(Exception(message))
+
+
+def test_prompt_mode_retry_recovers_from_unparseable_first_reply(monkeypatch):
+    """The retry path must survive a bad first reply and feed the error back.
+
+    Regression test. `except ... as first_error` unbinds that name when the
+    block exits, so the retry read a dead variable and raised NameError instead
+    of retrying — discarding a whole batch of articles every time the model
+    returned prose instead of JSON. Only reachable when parsing actually fails,
+    which is why every existing test missed it.
+    """
+    replies = iter(["Certainly! Here is the JSON you asked for.", '{"value": "ok"}'])
+    sent: list[dict] = []
+
+    class _Reply:
+        def __init__(self, text):
+            self.choices = [
+                SimpleNamespace(
+                    message=SimpleNamespace(content=text, refusal=None),
+                    finish_reason="stop",
+                )
+            ]
+            self.usage = None
+
+    def fake_create(**kwargs):
+        sent.append(kwargs)
+        return _Reply(next(replies))
+
+    monkeypatch.setattr(
+        llm, "client", lambda: SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+        )
+    )
+
+    class Out(BaseModel):
+        value: str
+
+    result = llm._call_prompt_mode("sys", "user", Out, "low", 256, "extract")
+
+    assert result.value == "ok", "retry should return the second, valid reply"
+    assert len(sent) == 2, "should have retried exactly once"
+    # The parse error must reach the model, or the retry is just a blind redo.
+    assert "could not be parsed as JSON" in sent[1]["messages"][-1]["content"]

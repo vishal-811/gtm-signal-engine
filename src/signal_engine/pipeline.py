@@ -135,6 +135,13 @@ def run(
                 stats.errors.append(f"ats_cache write: {exc}")
                 log.warning("could not update the ATS cache: %s", exc)
 
+        # Now that boards are resolved, collapse the companies that upstream
+        # dedupe could not see were the same. Done before scoring so a
+        # duplicate costs neither a model call nor a row in the shortlist.
+        candidates, collapsed = filters.collapse_duplicate_boards(candidates)
+        if collapsed:
+            log.info("collapsed %d duplicate companies onto shared boards", collapsed)
+
     # ── 6. Geography ──────────────────────────────────────────────────────────
     candidates, geo_report = filters.apply_geo(candidates)
     stats.passed_filters = len(candidates)
@@ -180,7 +187,8 @@ def _finish(
     sheet_url = None
     if not dry_run and sheets_client is not None:
         try:
-            sheets_client.append_shortlist(passing, run_date)
+            inserted, refreshed = sheets_client.append_shortlist(passing, run_date)
+            log.info("sheet: %d new rows, %d refreshed", inserted, refreshed)
             sheets_client.upsert_seen(passing, run_date)
             sheet_url = sheets_client.url
         except Exception as exc:  # noqa: BLE001
