@@ -47,6 +47,12 @@ class Settings(BaseSettings):
     # beats reporting a confidently wrong one for a model that was swapped.
     openai_input_cost_per_mtok: float = 0.0
     openai_output_cost_per_mtok: float = 0.0
+    # How many model calls run in parallel per stage. Free tiers are the
+    # binding constraint here, not throughput: Gemini's free tier allows about
+    # 10 requests/minute, which four concurrent workers will burst straight
+    # past. The SDK retries the resulting 429s, so the run survives — it just
+    # wastes calls and wall-clock. Set 1-2 on a free tier.
+    llm_max_concurrency: int = 4
 
     google_sheet_id: str = ""
     google_service_account_file: str = ""

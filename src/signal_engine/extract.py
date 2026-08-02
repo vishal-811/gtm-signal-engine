@@ -15,14 +15,18 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
-from .config import prompt
+from .config import prompt, settings
 from .llm import RefusalError, structured_call
 from .schemas import Article, ExtractionBatch, FundingEvent
 
 log = logging.getLogger(__name__)
 
+
+def _workers() -> int:
+    """Parallel model calls for this stage — see LLM_MAX_CONCURRENCY."""
+    return max(1, settings().llm_max_concurrency)
+
 BATCH_SIZE = 10
-_MAX_WORKERS = 4
 # Ten records of ~15 short fields. Generous enough that a verbose batch never
 # truncates, which would fail the whole batch rather than one record.
 _MAX_TOKENS = 8000
@@ -116,7 +120,7 @@ def extract(articles: list[Article], batch_size: int = BATCH_SIZE) -> list[Fundi
         batch_size,
     )
 
-    with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(batches))) as pool:
+    with ThreadPoolExecutor(max_workers=min(_workers(), len(batches))) as pool:
         results = list(pool.map(_extract_batch, batches))
 
     events = [event for batch in results for event in batch]

@@ -21,7 +21,11 @@ from .textutil import truncate_words
 
 log = logging.getLogger(__name__)
 
-_MAX_WORKERS = 4
+
+def _workers() -> int:
+    """Parallel model calls for this stage — see LLM_MAX_CONCURRENCY."""
+    return max(1, settings().llm_max_concurrency)
+
 _MAX_TOKENS = 2000
 BODY_WORD_LIMIT = 90
 
@@ -129,7 +133,7 @@ def draft_all(candidates: list[Candidate]) -> list[Candidate]:
     """Draft outreach for every candidate, concurrently."""
     if not candidates:
         return []
-    with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(candidates))) as pool:
+    with ThreadPoolExecutor(max_workers=min(_workers(), len(candidates))) as pool:
         drafted = list(pool.map(draft_one, candidates))
     log.info(
         "drafted outreach for %d of %d candidates",

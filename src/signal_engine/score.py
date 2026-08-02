@@ -15,13 +15,17 @@ from __future__ import annotations
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
-from .config import Rubric, prompt, rubric as load_rubric
+from .config import Rubric, prompt, rubric as load_rubric, settings
 from .llm import RefusalError, structured_call
 from .schemas import Candidate, ScoreResult, clamp_score
 
 log = logging.getLogger(__name__)
 
-_MAX_WORKERS = 4
+
+def _workers() -> int:
+    """Parallel model calls for this stage — see LLM_MAX_CONCURRENCY."""
+    return max(1, settings().llm_max_concurrency)
+
 _MAX_TOKENS = 4000
 
 
@@ -180,7 +184,7 @@ def score_all(candidates: list[Candidate]) -> list[Candidate]:
         return []
     rubric = load_rubric()
 
-    with ThreadPoolExecutor(max_workers=min(_MAX_WORKERS, len(candidates))) as pool:
+    with ThreadPoolExecutor(max_workers=min(_workers(), len(candidates))) as pool:
         scored = list(pool.map(lambda c: score_one(c, rubric), candidates))
 
     scored.sort(key=lambda c: c.composite if c.composite is not None else -1, reverse=True)
