@@ -1,4 +1,4 @@
-"""Turn articles into structured funding events using Claude.
+"""Turn articles into structured funding events using the LLM.
 
 Articles are sent in batches. The system prompt (long, static, and cached)
 dominates a single-article request, so batching amortizes it across ten

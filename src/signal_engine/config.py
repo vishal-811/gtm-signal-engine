@@ -32,7 +32,15 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    # Configurable because OpenAI renames and retires models frequently.
+    # `verify-credentials` prints the ids this key can actually reach.
+    openai_model: str = "gpt-5"
+    # Per-model rates, used only to estimate the figure in the `runs` tab.
+    # Left at zero the pipeline reports tokens and no dollar amount, which
+    # beats reporting a confidently wrong one for a model that was swapped.
+    openai_input_cost_per_mtok: float = 0.0
+    openai_output_cost_per_mtok: float = 0.0
 
     google_sheet_id: str = ""
     google_service_account_file: str = ""

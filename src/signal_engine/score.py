@@ -1,6 +1,6 @@
 """Rubric scoring.
 
-Claude scores each criterion 0–5 with a justification; **Python computes the
+The model scores each criterion 0–5 with a justification; **Python computes the
 weighted composite**. That split is deliberate: arithmetic done by a language
 model is unauditable and occasionally wrong, whereas this way the composite is
 a pure function of the criterion scores and the weights in ``rubric.yaml``,

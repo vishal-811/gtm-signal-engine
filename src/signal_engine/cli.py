@@ -90,7 +90,7 @@ def cmd_show_config(_args: argparse.Namespace) -> int:
             filter(
                 None,
                 [
-                    "anthropic" if cfg.anthropic_api_key else "",
+                    "openai" if cfg.openai_api_key else "",
                     "sheet-id" if cfg.google_sheet_id else "",
                     "google-creds" if cfg.google_credentials_info() else "",
                     "slack" if cfg.slack_webhook_url else "",
@@ -376,8 +376,8 @@ def _preflight(dry_run: bool) -> str | None:
     """
     cfg = config.settings()
     missing: list[str] = []
-    if not cfg.anthropic_api_key:
-        missing.append("ANTHROPIC_API_KEY")
+    if not cfg.openai_api_key:
+        missing.append("OPENAI_API_KEY")
     if not dry_run:
         if not cfg.google_sheet_id:
             missing.append("GOOGLE_SHEET_ID")
@@ -504,7 +504,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     verify = subparsers.add_parser(
         "verify-credentials",
-        help="check that Claude, Google Sheets, and Slack are all reachable",
+        help="check that OpenAI, Google Sheets, and Slack are all reachable",
     )
     verify.set_defaults(func=cmd_verify_credentials)
 

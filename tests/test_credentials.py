@@ -1,6 +1,6 @@
 """Credential preflight checks.
 
-Only the pure ones are tested here — the Claude/Sheets/Slack checks make real
+Only the pure ones are tested here — the OpenAI/Sheets/Slack checks make real
 network calls by design, which is the whole point of them.
 """
 
@@ -108,4 +108,6 @@ class TestApolloCheck:
         result = credentials.check_apollo()
 
         assert not result.ok
-        assert "Organization plan" in result.fix
+        # The hint must point at the actual check, not repeat a plan-gating
+        # claim the docs do not consistently support.
+        assert "Settings" in result.fix and "APOLLO_ENABLED=false" in result.fix

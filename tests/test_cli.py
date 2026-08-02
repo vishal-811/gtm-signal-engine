@@ -19,7 +19,7 @@ def blank_settings(monkeypatch):
     """Settings with every credential cleared."""
     cfg = cli.config.settings()
     for field in (
-        "anthropic_api_key",
+        "openai_api_key",
         "google_sheet_id",
         "google_service_account_file",
         "google_service_account_json",
@@ -33,15 +33,15 @@ def blank_settings(monkeypatch):
 
 
 class TestPreflight:
-    def test_dry_run_needs_only_the_claude_key(self, blank_settings, monkeypatch):
-        monkeypatch.setattr(blank_settings, "anthropic_api_key", "sk-test", raising=False)
+    def test_dry_run_needs_only_the_openai_key(self, blank_settings, monkeypatch):
+        monkeypatch.setattr(blank_settings, "openai_api_key", "sk-test", raising=False)
         assert cli._preflight(dry_run=True) is None
 
-    def test_dry_run_reports_a_missing_claude_key(self, blank_settings):
-        assert cli._preflight(dry_run=True) == "ANTHROPIC_API_KEY"
+    def test_dry_run_reports_a_missing_openai_key(self, blank_settings):
+        assert cli._preflight(dry_run=True) == "OPENAI_API_KEY"
 
     def test_live_run_requires_every_publishing_credential(self, blank_settings, monkeypatch):
-        monkeypatch.setattr(blank_settings, "anthropic_api_key", "sk-test", raising=False)
+        monkeypatch.setattr(blank_settings, "openai_api_key", "sk-test", raising=False)
         missing = cli._preflight(dry_run=False)
 
         assert "GOOGLE_SHEET_ID" in missing
@@ -50,7 +50,7 @@ class TestPreflight:
 
     def test_live_run_passes_when_everything_is_set(self, blank_settings, monkeypatch):
         for field, value in (
-            ("anthropic_api_key", "sk-test"),
+            ("openai_api_key", "sk-test"),
             ("google_sheet_id", "sheet123"),
             ("google_service_account_json", '{"client_email":"a@b.com"}'),
             ("slack_webhook_url", "https://hooks.slack.com/services/x"),
@@ -68,7 +68,7 @@ class TestPreflight:
         self, omit, blank_settings, monkeypatch
     ):
         for field, value in (
-            ("anthropic_api_key", "sk-test"),
+            ("openai_api_key", "sk-test"),
             ("google_sheet_id", "s"),
             ("google_service_account_json", '{"client_email":"a@b.com"}'),
             ("slack_webhook_url", "https://hooks.slack.com/x"),
@@ -86,7 +86,7 @@ class TestPreflight:
     ):
         # Dry runs still draft, but a placeholder signature is harmless when
         # nothing is published.
-        monkeypatch.setattr(blank_settings, "anthropic_api_key", "sk-test", raising=False)
+        monkeypatch.setattr(blank_settings, "openai_api_key", "sk-test", raising=False)
         assert cli._preflight(dry_run=True) is None
 
 
@@ -153,7 +153,7 @@ class TestWorkflows:
     def test_daily_workflow_passes_every_required_secret(self):
         raw = (PROJECT_ROOT / ".github" / "workflows" / "daily.yml").read_text()
         for secret in (
-            "ANTHROPIC_API_KEY",
+            "OPENAI_API_KEY",
             "GOOGLE_SHEET_ID",
             "GOOGLE_SERVICE_ACCOUNT_JSON",
             "SLACK_WEBHOOK_URL",

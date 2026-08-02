@@ -28,22 +28,49 @@ class CheckResult:
     skipped: bool = False
 
 
-def check_anthropic() -> CheckResult:
-    name = "Claude API"
+def check_openai() -> CheckResult:
+    name = "OpenAI API"
     fix = (
-        "Create a key at https://console.anthropic.com/settings/keys and set "
-        "ANTHROPIC_API_KEY in .env. Note this is a billable API key, separate "
-        "from a Claude.ai subscription."
+        "Create a key at https://platform.openai.com/api-keys and set "
+        "OPENAI_API_KEY in .env. The key also needs credit — check "
+        "https://platform.openai.com/settings/organization/billing"
     )
-    if not settings().anthropic_api_key:
-        return CheckResult(name, False, "ANTHROPIC_API_KEY is not set", fix)
-    try:
-        from .llm import ping
+    cfg = settings()
+    if not cfg.openai_api_key:
+        return CheckResult(name, False, "OPENAI_API_KEY is not set", fix)
 
-        model = ping()
-    except Exception as exc:  # noqa: BLE001 - report any failure to the user
+    from . import llm
+
+    # Listed first: if OPENAI_MODEL is wrong, the ping fails with a bare 404
+    # and the useful information is the set of ids this key can actually use.
+    try:
+        models = llm.available_models()
+    except Exception as exc:  # noqa: BLE001
         return CheckResult(name, False, f"{type(exc).__name__}: {exc}", fix)
-    return CheckResult(name, True, f"reachable, responded as {model}")
+
+    if cfg.openai_model not in models:
+        preview = ", ".join(models[:12]) or "(none returned)"
+        return CheckResult(
+            name,
+            False,
+            f"OPENAI_MODEL={cfg.openai_model!r} is not available to this key.\n"
+            f"     Models you can use: {preview}",
+            "Set OPENAI_MODEL in .env to one of the ids listed above.",
+        )
+
+    try:
+        responded = llm.ping()
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult(name, False, f"{type(exc).__name__}: {exc}", fix)
+
+    rates = (
+        "cost estimates on"
+        if llm.usage.cost_is_estimated
+        else "cost estimates off (set OPENAI_*_COST_PER_MTOK)"
+    )
+    return CheckResult(
+        name, True, f"reachable, responded as {responded} · {rates}"
+    )
 
 
 def check_google_sheets() -> CheckResult:
@@ -133,9 +160,10 @@ def check_slack() -> CheckResult:
 def check_apollo() -> CheckResult:
     name = "Apollo (optional)"
     fix = (
-        "Raw API access requires Apollo's Organization plan (~$119/user/mo). "
-        "On Basic or Professional, leave APOLLO_ENABLED=false — the pipeline "
-        "does not need it. To check: Apollo → Settings → Integrations → API."
+        "Apollo → Settings → Integrations → API → create a key. Whether your "
+        "plan allows raw API calls varies and the docs disagree, so this check "
+        "just tries it. If the key is rejected, set APOLLO_ENABLED=false — the "
+        "pipeline does not need it."
     )
     cfg = settings()
     if not cfg.apollo_enabled:
@@ -154,7 +182,7 @@ def check_apollo() -> CheckResult:
                 "Content-Type": "application/json",
                 "x-api-key": cfg.apollo_api_key,
             },
-            json={"domain": "anthropic.com"},
+            json={"domain": "stripe.com"},
             timeout=20,
         )
     except Exception as exc:  # noqa: BLE001
@@ -166,9 +194,9 @@ def check_apollo() -> CheckResult:
         return CheckResult(
             name,
             False,
-            f"HTTP {response.status_code} — key rejected. This is the expected "
-            "result on the Basic/Professional plans, which do not grant raw API "
-            "access. Set APOLLO_ENABLED=false.",
+            f"HTTP {response.status_code} — key rejected, which usually means "
+            "this plan does not grant raw API access. Set APOLLO_ENABLED=false; "
+            "the pipeline is fully functional without it.",
             fix,
         )
     return CheckResult(name, False, f"HTTP {response.status_code}: {response.text[:200]}", fix)
@@ -228,7 +256,7 @@ def check_sender_identity() -> CheckResult:
 
 def run_all() -> list[CheckResult]:
     return [
-        check_anthropic(),
+        check_openai(),
         check_google_sheets(),
         check_slack(),
         check_sender_identity(),

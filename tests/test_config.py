@@ -85,15 +85,47 @@ class TestPrompts:
     def test_every_stage_prompt_exists(self, name):
         assert config.prompt(name).strip()
 
-    @pytest.mark.parametrize("name", ["extract", "score", "draft"])
-    def test_prompts_clear_the_512_token_cache_minimum(self, name):
-        # Claude Opus 5 will not cache a prefix under 512 tokens, and does so
-        # silently. At ~4 chars/token, 2400 chars is a safe floor. Falling
-        # under it would quietly multiply the bill for the whole run.
-        assert len(config.prompt(name)) > 2400, (
-            f"prompts/{name}.md is short enough to fall under the prompt-cache "
-            "minimum; caching would silently stop working"
+    # OpenAI caches automatically only at or above 1024 prompt tokens, and a
+    # shorter prompt simply never caches — silently, for every call in the run.
+    # At ~4 chars/token that is ~4096 characters.
+    CACHE_MIN_CHARS = 4096
+
+    @staticmethod
+    def _system_prompt(stage: str) -> str:
+        """The string actually sent as the system message.
+
+        Not the same as the raw .md file for two stages: `score` appends the
+        rendered rubric and `draft` appends the sender block, both at runtime.
+        Measuring the file alone would test the wrong thing.
+        """
+        from signal_engine import draft, score
+
+        return {
+            "extract": lambda: config.prompt("extract"),
+            "score": score.system_prompt,
+            "draft": draft.system_prompt,
+        }[stage]()
+
+    @pytest.mark.parametrize("stage", ["extract", "score"])
+    def test_high_volume_prompts_clear_the_1024_token_cache_minimum(self, stage):
+        # extract and score are the volume drivers, so caching pays for itself
+        # there. `extract` currently clears the bar by only ~1%, which is
+        # exactly why this test exists: trimming a few lines from that prompt
+        # would silently disable caching for the most expensive stage.
+        size = len(self._system_prompt(stage))
+        assert size > self.CACHE_MIN_CHARS, (
+            f"the {stage} system prompt is {size} chars, under the "
+            f"~{self.CACHE_MIN_CHARS} needed for OpenAI's 1024-token caching "
+            "threshold. Caching would stop working with no error."
         )
+
+    def test_draft_prompt_is_known_to_be_under_the_cache_threshold(self):
+        # Documented rather than fixed. The draft stage only runs for companies
+        # that already cleared the score threshold (single digits per day), so
+        # the lost caching is worth a few cents a month. Padding the prompt to
+        # win a cache hit would be cargo-culting. If this ever grows past the
+        # threshold the assertion flips and the exemption can be deleted.
+        assert len(self._system_prompt("draft")) < self.CACHE_MIN_CHARS
 
     def test_missing_prompt_raises_a_useful_error(self):
         with pytest.raises(FileNotFoundError, match="Missing prompt file"):

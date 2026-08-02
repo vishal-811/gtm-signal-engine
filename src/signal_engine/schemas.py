@@ -4,7 +4,7 @@ Models are split into two groups:
 
 * **LLM output models** — passed to ``client.messages.parse()`` as the response
   schema. These deliberately avoid numeric bounds and string-length limits,
-  because the Anthropic structured-output schema subset does not support them
+  because the structured-output schema subset does not support them
   (the SDK strips such constraints before sending, then re-validates locally,
   which turns a model's harmless out-of-range answer into a hard failure).
   Ranges are clamped in Python instead — see ``clamp_score``.
@@ -60,7 +60,7 @@ class Article(BaseModel):
 class FundingEvent(BaseModel):
     """A funding announcement extracted from an article.
 
-    Emitted by Claude. Kept flat and constraint-free for structured-output
+    Emitted by the model. Kept flat and constraint-free for structured-output
     compatibility.
     """
 
@@ -114,7 +114,7 @@ class FundingEvent(BaseModel):
 
 
 class ExtractionBatch(BaseModel):
-    """Wrapper so one Claude call can process several articles at once."""
+    """Wrapper so one model call can process several articles at once."""
 
     events: list[FundingEvent]
 
@@ -167,7 +167,7 @@ class OpeningsResult(BaseModel):
 
 
 class CriterionScore(BaseModel):
-    """One rubric criterion, scored by Claude."""
+    """One rubric criterion, scored by the model."""
 
     id: str = Field(description="The criterion id, copied verbatim from the rubric.")
     score: float = Field(description="0 to 5, where 5 is the strongest possible fit.")
@@ -175,7 +175,7 @@ class CriterionScore(BaseModel):
 
 
 class ScoreResult(BaseModel):
-    """Claude's scoring output. The composite total is NOT included here — it is
+    """The model's scoring output. The composite total is NOT included here — it is
     computed in Python from these criteria and the rubric weights, so the
     arithmetic is deterministic and testable rather than model-generated."""
 

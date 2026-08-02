@@ -8,10 +8,10 @@ the company has live engineering openings, and posts a ranked shortlist with
 drafted cold emails to Google Sheets and Slack.
 
 ```
-RSS feeds ──▶ Extract (Claude) ──▶ Filter (geo/recency/dedupe) ──▶ Enrich (Apollo, optional)
+RSS feeds ──▶ Extract (LLM)    ──▶ Filter (geo/recency/dedupe) ──▶ Enrich (Apollo, optional)
                                                                             │
                                                                             ▼
-Slack + Sheets ◀── Draft (Claude) ◀── Score (Claude + rubric) ◀── Verify openings (ATS APIs)
+Slack + Sheets ◀── Draft (LLM) ◀── Score (LLM + rubric)    ◀── Verify openings (ATS APIs)
 ```
 
 **This codebase never sends email.** Drafts land in Sheets and Slack for you to
@@ -45,14 +45,22 @@ Fill in the four required credentials below, then run
 service and tells you exactly what to fix — you never discover a broken
 credential at 2:30am in a CI log.
 
-#### Claude API key (required)
+#### OpenAI API key (required)
 
-1. https://console.anthropic.com/settings/keys → **Create Key**
-2. Set `ANTHROPIC_API_KEY` in `.env`
+1. https://platform.openai.com/api-keys → **Create new secret key** → copy it
+2. Add credit at https://platform.openai.com/settings/organization/billing —
+   a valid key with a zero balance fails on every call
+3. Set `OPENAI_API_KEY` in `.env`
 
-A billable API key, **not** the same as a Claude.ai subscription. Expect roughly
-$1–3/day at typical volume; every run's actual cost is logged to the `runs`
-sheet tab so you can tune on real numbers.
+**Pick a model.** `OPENAI_MODEL` defaults to `gpt-5`. Model names change often,
+so `verify-credentials` calls the models endpoint, prints the ids *your* key can
+actually reach, and fails loudly if `OPENAI_MODEL` is not among them — you will
+never discover a bad model name at 02:30 UTC.
+
+**Cost reporting is opt-in.** Set `OPENAI_INPUT_COST_PER_MTOK` and
+`OPENAI_OUTPUT_COST_PER_MTOK` to your model's published rates and the `runs`
+tab reports dollars. Left at `0` it reports tokens only — deliberately, because
+a hardcoded price for a model you may have swapped would be confidently wrong.
 
 #### Google Sheets (required)
 
@@ -208,7 +216,7 @@ Repository secrets required:
 
 | Secret | Notes |
 |---|---|
-| `ANTHROPIC_API_KEY` | |
+| `OPENAI_API_KEY` | |
 | `GOOGLE_SHEET_ID` | |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | The **full contents** of the JSON file — Actions can't mount a file |
 | `SLACK_WEBHOOK_URL` | |
@@ -229,7 +237,7 @@ posts to Slack, so a broken cron is never mistaken for a quiet day.
 ```
 
 The suite runs entirely on recorded fixtures: real RSS XML, and real Greenhouse,
-Lever, and Ashby responses captured from live boards. Claude calls are stubbed —
+Lever, and Ashby responses captured from live boards. Model calls are stubbed —
 what's tested is the logic around them (batching, the source-URL backfill,
 failure isolation, score arithmetic, the word ceiling), which is where the
 correctness risk actually lives.
@@ -251,8 +259,16 @@ dropped.
 
 **Effort is set per stage.** Extraction runs at `low` (mechanical, high volume),
 scoring at `high` (the judgment call the pipeline exists for), drafting at
-`medium`. Prompt caching is asserted, not assumed — if the cache never engages,
-`llm.py` logs a warning rather than letting the bill quietly multiply.
+`medium`. These map onto OpenAI's `reasoning_effort`. If the chosen model has no
+such parameter, `llm.py` detects the rejection once, logs a warning, and
+continues without it for the rest of the run — matched on the error text, not a
+model-name allowlist, which would go stale.
+
+**Prompt caching is automatic above 1024 tokens.** The extract and score system
+prompts clear that bar and are byte-stable across a run, so they cache. The
+draft prompt is deliberately under it: that stage only sees companies which
+already passed the threshold, so padding it to win a cache hit would be
+cargo-culting. A test pins all three.
 
 **One broken feed never stops a run.** Every feed is fetched in isolation and
 its failure recorded in the `runs` tab. The same applies to ATS boards, one

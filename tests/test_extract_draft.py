@@ -1,6 +1,6 @@
 """Extraction and drafting, with the LLM call stubbed.
 
-The Claude calls themselves are not tested here — what is tested is the logic
+The model calls themselves are not tested here — what is tested is the logic
 wrapped around them, which is where the correctness risk actually lives: batch
 rendering, the source-URL backfill (which can attach the wrong article to the
 wrong company), failure isolation, and the outreach word ceiling.
