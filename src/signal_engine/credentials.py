@@ -29,7 +29,7 @@ class CheckResult:
 
 
 def check_openai() -> CheckResult:
-    name = "OpenAI API"
+    name = "LLM API"
     fix = (
         "Create a key at https://platform.openai.com/api-keys and set "
         "OPENAI_API_KEY in .env. The key also needs credit — check "
@@ -55,7 +55,8 @@ def check_openai() -> CheckResult:
     else:
         model_note = f"{len(models)} models listed"
 
-    if models is not None and cfg.openai_model not in models:
+    known = {llm.normalize_model_id(m) for m in models} if models is not None else None
+    if known is not None and llm.normalize_model_id(cfg.openai_model) not in known:
         preview = ", ".join(models[:12]) or "(none returned)"
         return CheckResult(
             name,

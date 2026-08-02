@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # this pipeline depends on rather than trusting the "OpenAI-compatible"
     # label.
     openai_base_url: str = ""
+    # Some gateways gate access on the client identifier and reject anything
+    # they do not recognise — AgentRouter answers `unauthorized client
+    # detected` to the SDK's default agent. Blank leaves the SDK's own value.
+    openai_user_agent: str = ""
     # Configurable because OpenAI renames and retires models frequently.
     # `verify-credentials` prints the ids this key can actually reach.
     openai_model: str = "gpt-5"

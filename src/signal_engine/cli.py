@@ -239,9 +239,12 @@ def cmd_check_endpoint(args: argparse.Namespace) -> int:
         return 2
 
     cfg = config.settings()
-    saved = (cfg.openai_api_key, cfg.openai_base_url, cfg.openai_model)
+    saved = (cfg.openai_api_key, cfg.openai_base_url, cfg.openai_model,
+             cfg.openai_user_agent)
     cfg.openai_api_key = key
     cfg.openai_base_url = args.base_url or ""
+    if args.user_agent is not None:
+        cfg.openai_user_agent = args.user_agent
     if args.model:
         cfg.openai_model = args.model
     llm.reset_client()
@@ -270,7 +273,8 @@ def cmd_check_endpoint(args: argparse.Namespace) -> int:
 
         # 2. Is the configured model actually one of them?
         if models is not None:
-            if cfg.openai_model in models:
+            known = {llm.normalize_model_id(m) for m in models}
+            if llm.normalize_model_id(cfg.openai_model) in known:
                 console.print(f"[green]✓[/green] model '{cfg.openai_model}' is available")
             else:
                 console.print(f"[red]✗[/red] model '{cfg.openai_model}' NOT in the list")
@@ -305,7 +309,8 @@ def cmd_check_endpoint(args: argparse.Namespace) -> int:
         else:
             console.print("\n[yellow]Nothing was written to .env.[/yellow]\n")
     finally:
-        cfg.openai_api_key, cfg.openai_base_url, cfg.openai_model = saved
+        (cfg.openai_api_key, cfg.openai_base_url, cfg.openai_model,
+         cfg.openai_user_agent) = saved
         llm.reset_client()
 
     return exit_code
@@ -636,6 +641,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="API key. Omit to be prompted with hidden input, which keeps it "
         "out of your shell history.",
+    )
+    endpoint_cmd.add_argument(
+        "--user-agent",
+        default=None,
+        metavar="UA",
+        help="override the client User-Agent. Some gateways gate on it and "
+        "reject unrecognised clients.",
     )
     endpoint_cmd.add_argument(
         "--list-models", action="store_true", help="print every available model id"

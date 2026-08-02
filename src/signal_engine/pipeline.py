@@ -150,7 +150,7 @@ def _finish(
     """Publish (unless dry) and close out run accounting."""
     stats.input_tokens = llm.usage.input_tokens
     stats.output_tokens = llm.usage.output_tokens
-    stats.cache_read_tokens = llm.usage.cache_read_tokens
+    stats.cache_read_tokens = llm.usage.cached_tokens
     stats.estimated_cost_usd = llm.usage.cost_usd
 
     sheet_url = None

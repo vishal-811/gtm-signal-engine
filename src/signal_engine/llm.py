@@ -145,6 +145,8 @@ def client() -> openai.OpenAI:
         kwargs: dict[str, Any] = {"api_key": cfg.openai_api_key, "max_retries": 4}
         if cfg.openai_base_url.strip():
             kwargs["base_url"] = cfg.openai_base_url.strip()
+        if cfg.openai_user_agent.strip():
+            kwargs["default_headers"] = {"User-Agent": cfg.openai_user_agent.strip()}
         _client = openai.OpenAI(**kwargs)
     return _client
 
@@ -165,13 +167,27 @@ def model() -> str:
     return settings().openai_model
 
 
+def normalize_model_id(model_id: str) -> str:
+    """Strip a provider's namespace prefix for comparison purposes.
+
+    Gemini's OpenAI-compatible ``/models`` endpoint returns ids as
+    ``models/gemini-3.6-flash`` while happily *accepting* the bare
+    ``gemini-3.6-flash`` on completion calls. Comparing the two literally makes
+    a perfectly valid model look unavailable.
+    """
+    return model_id.split("/", 1)[-1] if model_id.startswith("models/") else model_id
+
+
 def _check_cache_health(raw_usage: Any, label: str) -> None:
     """Warn once per run when caching cannot possibly engage.
 
     OpenAI caches automatically above 1024 prompt tokens, so a prompt below
     that threshold will never hit — silently, and for the whole run.
     """
-    if usage._cache_checked:
+    # The capability probe is deliberately tiny; warning that it is too short
+    # to cache is noise, and it would burn the once-per-run flag before a real
+    # stage got the chance to report.
+    if label == "probe" or usage._cache_checked:
         return
     prompt_tokens = getattr(raw_usage, "prompt_tokens", 0) or 0
     if prompt_tokens and prompt_tokens < 1024:
