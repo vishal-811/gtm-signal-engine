@@ -189,6 +189,10 @@ def _finish(
         try:
             inserted, refreshed = sheets_client.append_shortlist(passing, run_date)
             log.info("sheet: %d new rows, %d refreshed", inserted, refreshed)
+            # New rows land at the bottom regardless of score; re-sort so the
+            # top of the sheet is still the part worth reading.
+            if inserted:
+                sheets_client.sort_shortlist()
             sheets_client.upsert_seen(passing, run_date)
             sheet_url = sheets_client.url
         except Exception as exc:  # noqa: BLE001

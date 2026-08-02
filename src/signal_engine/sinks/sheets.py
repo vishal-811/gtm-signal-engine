@@ -17,7 +17,9 @@ persistent volume and no commit-back to git.
 from __future__ import annotations
 
 import logging
+import re
 import time
+from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any
 
@@ -33,30 +35,73 @@ SEEN = "seen"
 ATS_CACHE = "ats_cache"
 RUNS = "runs"
 
-# Ordered for reading left-to-right the way the decision is actually made:
-# is it worth my time (score, market, roles), what is the pitch (signal, email),
-# then the evidence, then the raw audit trail.
-SHORTLIST_HEADERS = [
-    # decide
-    "run_date", "rank", "score", "company", "market", "eng_roles",
-    "round_stage", "amount_usd", "sector",
-    # act
-    "key_signal", "email_subject", "email_body",
-    # verify
-    "openings_status", "sample_titles", "newest_post", "board_url", "risks",
-    # context
-    "announced", "investors", "hq", "domain", "total_roles",
-    # audit
-    "criteria_breakdown", "personalization_hook", "source_url",
+
+@dataclass(frozen=True)
+class _Column:
+    """One shortlist column.
+
+    ``key`` is the stable internal name rows are built with; ``label`` is what
+    the sheet shows. Keeping them apart means a column can be renamed for
+    readability without touching row construction, and the migration can map
+    an old sheet onto the new layout by key.
+    """
+
+    key: str
+    label: str
+    width: int
+    kind: str = "text"  # text | prose | number | money | score | date
+    hidden: bool = False
+
+
+# Ordered the way the decision is actually made: is this worth my time, what do
+# I say, what backs it up, then the audit trail. The last group is hidden — it
+# is there to be checked when a score looks wrong, not read every morning.
+_COLUMNS: list[_Column] = [
+    # ── decide ────────────────────────────────────────────────────────────────
+    _Column("company", "Company", 160),
+    _Column("score", "Score", 65, "score"),
+    _Column("market", "Market", 110),
+    _Column("eng_roles", "Eng Roles", 80, "number"),
+    _Column("round_stage", "Stage", 85),
+    _Column("amount_usd", "Amount", 115, "money"),
+    # The two dates sit together and say plainly which is which: one is when
+    # the company raised, the other is when this pipeline last looked. A single
+    # ambiguous "run_date" column read as though the backfill had only covered
+    # its own run day.
+    _Column("announced", "Funded On", 100, "date"),
+    _Column("run_date", "Scanned On", 100, "date"),
+    # ── act ───────────────────────────────────────────────────────────────────
+    _Column("key_signal", "Key Signal", 340, "prose"),
+    _Column("email_subject", "Email Subject", 230, "prose"),
+    _Column("email_body", "Email Body", 320, "prose"),
+    # ── verify ────────────────────────────────────────────────────────────────
+    _Column("openings_status", "Board", 100),
+    _Column("sample_titles", "Sample Roles", 280, "prose"),
+    _Column("newest_post", "Latest Post", 100, "date"),
+    _Column("board_url", "Board URL", 210),
+    # ── context ───────────────────────────────────────────────────────────────
+    _Column("sector", "Sector", 140),
+    _Column("risks", "Risks", 280, "prose"),
+    _Column("investors", "Investors", 210, "prose"),
+    _Column("hq", "Locations", 210, "prose"),
+    _Column("source_url", "Source", 210),
+    # ── audit (hidden) ────────────────────────────────────────────────────────
+    _Column("domain", "Domain", 150, hidden=True),
+    _Column("total_roles", "All Roles", 80, "number", hidden=True),
+    _Column("criteria_breakdown", "Score Breakdown", 420, "prose", hidden=True),
+    _Column("personalization_hook", "Hook", 260, "prose", hidden=True),
+    # Rank is per-run, so it repeats across runs and means nothing once rows
+    # from several runs share a sheet. Sorting by Score is the real ranking.
+    _Column("rank", "Rank", 60, "number", hidden=True),
 ]
 
-# Columns holding prose, which need wrapping and a wide-but-bounded width.
-_WIDE_COLUMNS = {
-    "key_signal": 320, "email_body": 420, "email_subject": 200,
-    "sample_titles": 300, "risks": 300, "criteria_breakdown": 400,
-    "board_url": 220, "source_url": 220, "company": 150,
-}
-_NARROW_DEFAULT = 90
+SHORTLIST_HEADERS = [c.label for c in _COLUMNS]
+_BY_KEY = {c.key: c for c in _COLUMNS}
+_NUMERIC_KINDS = {"number", "money", "score"}
+# One scannable prose column wraps; the rest clip. Wrapping every prose column
+# pushed rows past 300px, so only two fit on screen.
+_WRAPPED = {"key_signal"}
+_ROW_HEIGHT = 60
 SEEN_HEADERS = ["key", "company", "first_seen", "last_seen", "last_score", "times_posted"]
 ATS_CACHE_HEADERS = ["domain", "provider", "board_token", "resolved_at"]
 RUNS_HEADERS = [
@@ -175,140 +220,210 @@ class SheetsClient:
     # ── presentation ──────────────────────────────────────────────────────────
 
     def format_shortlist(self) -> None:
-        """Make the shortlist tab readable at a glance.
+        """Make the shortlist readable at a glance.
 
-        Applied once, on demand — not on every run, since these are
-        spreadsheet-level style calls and re-issuing them each night would
-        waste API quota for no change.
+        Applied on demand, not per run — these are style calls and re-issuing
+        them nightly would burn quota for no change.
+
+        The layout goal is a table you can scan, not a wall of prose. Rows are
+        pinned to a fixed height because wrapped text had stretched them past
+        300px, leaving two companies visible on a screen.
         """
         ws = self._tab(SHORTLIST)
         sheet_id = ws.id
-        last_col = len(SHORTLIST_HEADERS)
+        last_col = len(_COLUMNS)
+        idx = {c.key: i for i, c in enumerate(_COLUMNS)}
+
+        def data_range(col: int | None = None) -> dict[str, Any]:
+            rng: dict[str, Any] = {"sheetId": sheet_id, "startRowIndex": 1}
+            if col is not None:
+                rng["startColumnIndex"] = col
+                rng["endColumnIndex"] = col + 1
+            return rng
 
         requests: list[dict[str, Any]] = [
-            # Header row and the company column stay visible while scrolling
-            # through 25 columns of detail.
             {
                 "updateSheetProperties": {
                     "properties": {
                         "sheetId": sheet_id,
-                        "gridProperties": {"frozenRowCount": 1, "frozenColumnCount": 4},
+                        "gridProperties": {
+                            "frozenRowCount": 1,
+                            "frozenColumnCount": 2,
+                        },
                     },
-                    "fields": "gridProperties.frozenRowCount,gridProperties.frozenColumnCount",
+                    "fields": (
+                        "gridProperties.frozenRowCount,"
+                        "gridProperties.frozenColumnCount"
+                    ),
                 }
             },
             {
                 "repeatCell": {
-                    "range": {"sheetId": sheet_id, "startRowIndex": 0, "endRowIndex": 1},
+                    "range": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": 0,
+                        "endRowIndex": 1,
+                    },
                     "cell": {
                         "userEnteredFormat": {
-                            "backgroundColor": {"red": 0.17, "green": 0.24, "blue": 0.31},
+                            "backgroundColor": {
+                                "red": 0.13, "green": 0.19, "blue": 0.26
+                            },
                             "textFormat": {
                                 "bold": True,
+                                "fontSize": 10,
                                 "foregroundColor": {"red": 1, "green": 1, "blue": 1},
                             },
                             "verticalAlignment": "MIDDLE",
+                            "horizontalAlignment": "LEFT",
+                            "wrapStrategy": "CLIP",
                         }
                     },
-                    "fields": "userEnteredFormat(backgroundColor,textFormat,verticalAlignment)",
+                    "fields": (
+                        "userEnteredFormat(backgroundColor,textFormat,"
+                        "verticalAlignment,horizontalAlignment,wrapStrategy)"
+                    ),
                 }
             },
-            # Top-align every data row: with wrapped prose in some columns and
-            # short values in others, middle alignment looks ragged.
             {
                 "repeatCell": {
-                    "range": {"sheetId": sheet_id, "startRowIndex": 1},
+                    "range": data_range(),
                     "cell": {
                         "userEnteredFormat": {
                             "verticalAlignment": "TOP",
                             "wrapStrategy": "CLIP",
+                            "textFormat": {"fontSize": 10},
                         }
                     },
-                    "fields": "userEnteredFormat(verticalAlignment,wrapStrategy)",
+                    "fields": (
+                        "userEnteredFormat(verticalAlignment,wrapStrategy,"
+                        "textFormat)"
+                    ),
                 }
             },
+            # A fixed height is what actually makes the sheet scannable. Without
+            # it a single long key signal decides how tall its row is.
+            {
+                "updateDimensionProperties": {
+                    "range": {
+                        "sheetId": sheet_id,
+                        "dimension": "ROWS",
+                        "startIndex": 1,
+                    },
+                    "properties": {"pixelSize": _ROW_HEIGHT},
+                    "fields": "pixelSize",
+                }
+            },
+            {"setBasicFilter": {"filter": {"range": {"sheetId": sheet_id}}}},
         ]
 
-        for index, name in enumerate(SHORTLIST_HEADERS):
-            width = _WIDE_COLUMNS.get(name, _NARROW_DEFAULT)
+        for i, column in enumerate(_COLUMNS):
             requests.append(
                 {
                     "updateDimensionProperties": {
                         "range": {
                             "sheetId": sheet_id,
                             "dimension": "COLUMNS",
-                            "startIndex": index,
-                            "endIndex": index + 1,
+                            "startIndex": i,
+                            "endIndex": i + 1,
                         },
-                        "properties": {"pixelSize": width},
-                        "fields": "pixelSize",
+                        "properties": {
+                            "pixelSize": column.width,
+                            "hiddenByUser": column.hidden,
+                        },
+                        "fields": "pixelSize,hiddenByUser",
                     }
                 }
             )
-            if name in _WIDE_COLUMNS and name not in ("board_url", "source_url"):
+            if column.key in _WRAPPED:
                 requests.append(
                     {
                         "repeatCell": {
-                            "range": {
-                                "sheetId": sheet_id,
-                                "startRowIndex": 1,
-                                "startColumnIndex": index,
-                                "endColumnIndex": index + 1,
+                            "range": data_range(i),
+                            "cell": {
+                                "userEnteredFormat": {"wrapStrategy": "WRAP"}
                             },
-                            "cell": {"userEnteredFormat": {"wrapStrategy": "WRAP"}},
                             "fields": "userEnteredFormat.wrapStrategy",
                         }
                     }
                 )
-
-        def col(name: str) -> int:
-            return SHORTLIST_HEADERS.index(name)
-
-        # Money as money, score to two places — otherwise 200000000 and
-        # 3.6500000000000004 both land in the sheet verbatim.
-        for name, pattern in (("amount_usd", "$#,##0"), ("score", "0.00")):
-            index = col(name)
-            requests.append(
-                {
-                    "repeatCell": {
-                        "range": {
-                            "sheetId": sheet_id,
-                            "startRowIndex": 1,
-                            "startColumnIndex": index,
-                            "endColumnIndex": index + 1,
-                        },
-                        "cell": {
-                            "userEnteredFormat": {
-                                "numberFormat": {"type": "NUMBER", "pattern": pattern}
-                            }
-                        },
-                        "fields": "userEnteredFormat.numberFormat",
+            pattern = {
+                "money": "$#,##0",
+                "score": "0.00",
+                "number": "0",
+            }.get(column.kind)
+            if pattern:
+                requests.append(
+                    {
+                        "repeatCell": {
+                            "range": data_range(i),
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "numberFormat": {
+                                        "type": "NUMBER",
+                                        "pattern": pattern,
+                                    },
+                                    "horizontalAlignment": "RIGHT",
+                                }
+                            },
+                            "fields": (
+                                "userEnteredFormat(numberFormat,"
+                                "horizontalAlignment)"
+                            ),
+                        }
                     }
-                }
+                )
+            elif column.kind == "date":
+                requests.append(
+                    {
+                        "repeatCell": {
+                            "range": data_range(i),
+                            "cell": {
+                                "userEnteredFormat": {
+                                    "numberFormat": {
+                                        "type": "DATE",
+                                        "pattern": "yyyy-mm-dd",
+                                    }
+                                }
+                            },
+                            "fields": "userEnteredFormat.numberFormat",
+                        }
+                    }
+                )
+
+        # Clear any rules from an earlier layout before adding these, or the
+        # old ones keep colouring whatever column now sits at their index.
+        for _ in range(6):
+            requests.append(
+                {"deleteConditionalFormatRule": {"sheetId": sheet_id, "index": 0}}
             )
 
-        # Colour the score so the strong leads are findable without reading.
-        score_range = {
-            "sheetId": sheet_id,
-            "startRowIndex": 1,
-            "startColumnIndex": col("score"),
-            "endColumnIndex": col("score") + 1,
-        }
         requests.append(
             {
                 "addConditionalFormatRule": {
                     "rule": {
-                        "ranges": [score_range],
+                        "ranges": [data_range(idx["score"])],
                         "gradientRule": {
                             "minpoint": {
-                                "color": {"red": 0.96, "green": 0.80, "blue": 0.80},
+                                "color": {
+                                    "red": 0.98, "green": 0.85, "blue": 0.83
+                                },
                                 "type": "NUMBER",
                                 "value": "2",
                             },
-                            "maxpoint": {
-                                "color": {"red": 0.72, "green": 0.88, "blue": 0.75},
+                            "midpoint": {
+                                "color": {
+                                    "red": 1.0, "green": 0.95, "blue": 0.80
+                                },
                                 "type": "NUMBER",
-                                "value": "5",
+                                "value": "3.6",
+                            },
+                            "maxpoint": {
+                                "color": {
+                                    "red": 0.78, "green": 0.91, "blue": 0.79
+                                },
+                                "type": "NUMBER",
+                                "value": "4.6",
                             },
                         },
                     },
@@ -316,8 +431,10 @@ class SheetsClient:
                 }
             }
         )
-        # Grey out rows whose openings could not be verified — present, but
-        # visibly weaker evidence than a confirmed board.
+        # Derive the column letter rather than hardcoding it. This formula used
+        # to say $M2 and would have silently graded the wrong column the moment
+        # the layout changed.
+        status_a1 = re.sub(r"\d+", "", rowcol_to_a1(2, idx["openings_status"] + 1))
         requests.append(
             {
                 "addConditionalFormatRule": {
@@ -333,12 +450,18 @@ class SheetsClient:
                         "booleanRule": {
                             "condition": {
                                 "type": "CUSTOM_FORMULA",
-                                "values": [{"userEnteredValue": '=$M2="unverified"'}],
+                                "values": [
+                                    {
+                                        "userEnteredValue": (
+                                            f'=${status_a1}2="unverified"'
+                                        )
+                                    }
+                                ],
                             },
                             "format": {
                                 "textFormat": {
                                     "foregroundColor": {
-                                        "red": 0.5, "green": 0.5, "blue": 0.5
+                                        "red": 0.55, "green": 0.55, "blue": 0.55
                                     }
                                 }
                             },
@@ -349,18 +472,70 @@ class SheetsClient:
             }
         )
 
-        self._sheet.batch_update({"requests": requests})
+        # Deleting rules that do not exist is an error, so the clears above are
+        # sent in their own best-effort pass.
+        clears = [r for r in requests if "deleteConditionalFormatRule" in r]
+        rest = [r for r in requests if "deleteConditionalFormatRule" not in r]
+        for clear in clears:
+            try:
+                self._sheet.batch_update({"requests": [clear]})
+            except Exception:  # noqa: BLE001 - nothing left to delete
+                break
+        self._sheet.batch_update({"requests": rest})
+        self._apply_banding(sheet_id, last_col)
         log.info("applied shortlist formatting")
 
-    def migrate_shortlist_columns(self) -> int:
-        """Rewrite existing rows into the current column order.
+    def _apply_banding(self, sheet_id: int, last_col: int) -> None:
+        """Alternating row shading. Re-adding over an existing band errors, so
+        this is separate and best-effort rather than part of the main batch."""
+        try:
+            self._sheet.batch_update(
+                {
+                    "requests": [
+                        {
+                            "addBanding": {
+                                "bandedRange": {
+                                    "range": {
+                                        "sheetId": sheet_id,
+                                        "startRowIndex": 1,
+                                        "startColumnIndex": 0,
+                                        "endColumnIndex": last_col,
+                                    },
+                                    "rowProperties": {
+                                        "firstBandColor": {
+                                            "red": 1, "green": 1, "blue": 1
+                                        },
+                                        "secondBandColor": {
+                                            "red": 0.97,
+                                            "green": 0.975,
+                                            "blue": 0.98,
+                                        },
+                                    },
+                                }
+                            }
+                        }
+                    ]
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.debug("banding already present: %s", exc)
 
-        The header order changed after rows already existed. Rewriting by
-        column *name* preserves them; a blind reorder would silently shift
-        every value one column left.
+    def migrate_shortlist_columns(self) -> int:
+        """Rewrite existing rows into the current column order and labels.
+
+        Rewrites by column *identity*, not position — a blind reorder would
+        shift every value one column left. Rows are matched on either the
+        current label or the legacy snake_case name, so a sheet written before
+        the rename still lands correctly.
+
+        Numbers are restored on the way through. ``get_all_values`` returns
+        every cell as a string, and writing those back RAW left the migrated
+        rows as text while freshly appended rows stayed numeric — visible in
+        the sheet as one row of left-aligned ``200000000`` among properly
+        formatted currency.
         """
         ws = self._tab(SHORTLIST)
-        values = ws.get_all_values()
+        values = _with_retry(ws.get_all_values, label="read_shortlist")
         if not values:
             return 0
         old_headers = values[0]
@@ -368,12 +543,22 @@ class SheetsClient:
             return 0
 
         records = [dict(zip(old_headers, row)) for row in values[1:]]
+        rows = [SHORTLIST_HEADERS]
+        for record in records:
+            row = []
+            for column in _COLUMNS:
+                raw = record.get(column.label)
+                if raw in (None, ""):
+                    raw = record.get(column.key, "")
+                row.append(_coerce(column, raw))
+            rows.append(row)
+
         ws.clear()
-        rows = [SHORTLIST_HEADERS] + [
-            [r.get(name, "") for name in SHORTLIST_HEADERS] for r in records
-        ]
-        ws.update(values=rows, range_name="A1", value_input_option="RAW")
-        log.info("migrated %d shortlist row(s) to the new column order", len(records))
+        _with_retry(
+            lambda: ws.update(values=rows, range_name="A1", value_input_option="RAW"),
+            label="migrate_shortlist",
+        )
+        log.info("migrated %d shortlist row(s) to the new column layout", len(records))
         return len(records)
 
     def _tab(self, title: str):
@@ -467,6 +652,43 @@ class SheetsClient:
             "shortlist: %d new, %d refreshed in place", len(appended), len(updates)
         )
         return (len(appended), len(updates))
+
+    def sort_shortlist(self) -> None:
+        """Order the sheet best-first.
+
+        Run after every write. Upserting refreshes rows in place and appends
+        new ones at the bottom, so without this the ordering degrades into
+        "whenever we first saw it" — and the top of the sheet stops being the
+        part worth reading.
+        """
+        ws = self._tab(SHORTLIST)
+        _with_retry(
+            lambda: self._sheet.batch_update(
+                {
+                    "requests": [
+                        {
+                            "sortRange": {
+                                "range": {
+                                    "sheetId": ws.id,
+                                    "startRowIndex": 1,
+                                    "startColumnIndex": 0,
+                                    "endColumnIndex": len(_COLUMNS),
+                                },
+                                "sortSpecs": [
+                                    {
+                                        "dimensionIndex": SHORTLIST_HEADERS.index(
+                                            "Score"
+                                        ),
+                                        "sortOrder": "DESCENDING",
+                                    }
+                                ],
+                            }
+                        }
+                    ]
+                }
+            ),
+            label="sort_shortlist",
+        )
 
     def dedupe_shortlist(self) -> int:
         """Drop rows sharing an identity with an earlier row. Returns the count.
@@ -595,6 +817,27 @@ def _location_summary(candidate: Candidate) -> str:
     return ", ".join(parts)
 
 
+def _coerce(column: _Column, raw: Any) -> Any:
+    """Restore a cell's type after a round-trip through ``get_all_values``.
+
+    Everything comes back as a string, so a currency column reads ``"$6,000,000"``
+    and would be written back as text — right-alignment and number formatting
+    silently lost. Anything unparseable is passed through untouched rather than
+    blanked; a value we cannot read is still worth keeping.
+    """
+    if raw is None:
+        return ""
+    if column.kind not in _NUMERIC_KINDS or not isinstance(raw, str):
+        return raw
+    cleaned = raw.strip().replace("$", "").replace(",", "")
+    if not cleaned:
+        return ""
+    try:
+        return float(cleaned) if column.kind == "score" else int(float(cleaned))
+    except ValueError:
+        return raw
+
+
 def _identity_keys(candidate: Candidate) -> list[str]:
     """Identities this candidate may already be filed under, best first.
 
@@ -615,11 +858,15 @@ def _identity_keys(candidate: Candidate) -> list[str]:
 def _row_identity_keys(header: list[str], row: list[str]) -> list[str]:
     """The same identities, recovered from a sheet row."""
 
-    def cell(name: str) -> str:
-        try:
-            return (row[header.index(name)] or "").strip().lower()
-        except (ValueError, IndexError):
-            return ""
+    def cell(key: str) -> str:
+        """Look up by key, tolerating both the current label and the legacy
+        snake_case header so identity still resolves mid-migration."""
+        for name in (_BY_KEY[key].label, key):
+            try:
+                return (row[header.index(name)] or "").strip().lower()
+            except (ValueError, IndexError):
+                continue
+        return ""
 
     keys = []
     if board := cell("board_url"):
@@ -696,7 +943,7 @@ def _shortlist_row(candidate: Candidate, rank: int, run_date: date) -> list[Any]
         "personalization_hook": outreach.personalization_hook if outreach else "",
         "source_url": event.source_url,
     }
-    return [values[name] for name in SHORTLIST_HEADERS]
+    return [values[column.key] for column in _COLUMNS]
 
 
 def _parse_date(raw: str) -> date | None:
