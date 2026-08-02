@@ -254,3 +254,75 @@ class TestDraftSystemPrompt:
 
     def test_carries_the_no_fabrication_rule(self):
         assert "Never state a fact that is not in the input" in draft.system_prompt()
+
+
+class TestBatchSplitOnRejection:
+    """Some endpoints reject a combined request while accepting each article in
+    it individually — AgentRouter answers `content-blocked` to certain batches.
+    Losing all ten articles to one poisoned neighbour is the difference between
+    a full shortlist and a thin one."""
+
+    def test_recognises_a_whole_request_rejection(self):
+        assert extract._is_batch_rejection(
+            RuntimeError("Error code: 400 - {'code': 'content-blocked'}")
+        )
+
+    def test_ignores_ordinary_failures(self):
+        # Splitting on a rate limit or auth error would multiply the problem.
+        for message in ("rate limit exceeded", "invalid api key", "timeout"):
+            assert not extract._is_batch_rejection(RuntimeError(message))
+
+    def test_splitting_recovers_everything_when_only_batches_are_rejected(
+        self, monkeypatch
+    ):
+        # This is AgentRouter's observed behaviour: a combined request is
+        # refused while every article in it succeeds on its own.
+        def batches_only(**kwargs):
+            user = kwargs["user"]
+            count = user.count("<article ")
+            if count > 1:
+                raise RuntimeError("400 content-blocked")
+            return ExtractionBatch(events=[_event(0)])
+
+        monkeypatch.setattr(extract, "structured_call", batches_only)
+        events = extract.extract([_article(i) for i in range(4)], batch_size=4)
+
+        # Without splitting this would be 0 articles. With it, all 4 survive.
+        assert len(events) == 4
+
+    def test_one_poisoned_article_costs_only_itself(self, monkeypatch):
+        bad = _article(3)
+
+        def selective(**kwargs):
+            user = kwargs["user"]
+            if bad.url in user:
+                raise RuntimeError("400 content-blocked")
+            count = user.count("<article ")
+            return ExtractionBatch(events=[_event(i) for i in range(count)])
+
+        monkeypatch.setattr(extract, "structured_call", selective)
+        events = extract.extract([_article(1), _article(2), bad, _article(4)],
+                                 batch_size=4)
+
+        # The offending article is dropped alone; its neighbours are recovered.
+        assert len(events) == 3
+
+    def test_a_single_article_rejection_drops_only_that_article(self, monkeypatch):
+        def always_blocked(**kwargs):
+            raise RuntimeError("400 content-blocked")
+
+        monkeypatch.setattr(extract, "structured_call", always_blocked)
+        assert extract.extract([_article(1), _article(2)], batch_size=2) == []
+
+    def test_non_rejection_errors_do_not_trigger_splitting(self, monkeypatch):
+        calls = {"n": 0}
+
+        def boom(**kwargs):
+            calls["n"] += 1
+            raise RuntimeError("upstream exploded")
+
+        monkeypatch.setattr(extract, "structured_call", boom)
+        extract.extract([_article(i) for i in range(4)], batch_size=4)
+
+        # One attempt, not a recursive cascade of retries.
+        assert calls["n"] == 1

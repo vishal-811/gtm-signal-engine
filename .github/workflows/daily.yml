@@ -50,7 +50,10 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
+          OPENAI_USER_AGENT: ${{ vars.OPENAI_USER_AGENT }}
+          LLM_STRUCTURED_MODE: ${{ vars.LLM_STRUCTURED_MODE || 'auto' }}
           LLM_MAX_CONCURRENCY: ${{ vars.LLM_MAX_CONCURRENCY || '4' }}
+          LLM_EXTRACT_BATCH_SIZE: ${{ vars.LLM_EXTRACT_BATCH_SIZE || '10' }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5' }}
           OPENAI_INPUT_COST_PER_MTOK: ${{ vars.OPENAI_INPUT_COST_PER_MTOK || '0' }}
           OPENAI_OUTPUT_COST_PER_MTOK: ${{ vars.OPENAI_OUTPUT_COST_PER_MTOK || '0' }}

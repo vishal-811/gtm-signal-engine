@@ -11,7 +11,7 @@ import json
 import os
 from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     # they do not recognise — AgentRouter answers `unauthorized client
     # detected` to the SDK's default agent. Blank leaves the SDK's own value.
     openai_user_agent: str = ""
+    # How to get structured output. "native" uses response_format, which is
+    # strictly enforced by the provider. "prompt" describes the schema in the
+    # prompt and parses the reply, for endpoints that silently ignore
+    # response_format (AgentRouter returns prose). "auto" tries native once and
+    # latches to prompt if the reply is not JSON.
+    llm_structured_mode: Literal["auto", "native", "prompt"] = "auto"
     # Configurable because OpenAI renames and retires models frequently.
     # `verify-credentials` prints the ids this key can actually reach.
     openai_model: str = "gpt-5"
@@ -57,6 +63,11 @@ class Settings(BaseSettings):
     # past. The SDK retries the resulting 429s, so the run survives — it just
     # wastes calls and wall-clock. Set 1-2 on a free tier.
     llm_max_concurrency: int = 4
+    # Articles per extraction call. Bigger amortizes the system prompt across
+    # more articles, which is the main cost lever. Some endpoints cap input
+    # tokens far below OpenAI: AgentRouter rejects roughly 7+ articles with a
+    # misleading `content-blocked` 400, so drop this to 4 there.
+    llm_extract_batch_size: int = 10
 
     google_sheet_id: str = ""
     google_service_account_file: str = ""

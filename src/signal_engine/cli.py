@@ -297,7 +297,10 @@ def cmd_check_endpoint(args: argparse.Namespace) -> int:
             exit_code = 1
 
         if llm.usage.calls:
-            console.print(f"\n[dim]{llm.usage.summary()}[/dim]")
+            console.print(
+                f"\n[dim]structured-output mode: {llm.structured_mode()} · "
+                f"{llm.usage.summary()}[/dim]"
+            )
 
         if exit_code == 0:
             console.print(
@@ -305,7 +308,15 @@ def cmd_check_endpoint(args: argparse.Namespace) -> int:
             )
             console.print(f"  OPENAI_BASE_URL={args.base_url or ''}")
             console.print(f"  OPENAI_MODEL={cfg.openai_model}")
-            console.print("  OPENAI_API_KEY=<the key you just entered>\n")
+            console.print("  OPENAI_API_KEY=<the key you just entered>")
+            if cfg.openai_user_agent:
+                console.print(f"  OPENAI_USER_AGENT={cfg.openai_user_agent}")
+            if llm.structured_mode() == "prompt":
+                console.print(
+                    "  LLM_STRUCTURED_MODE=prompt"
+                    "   [dim]# endpoint ignores response_format[/dim]"
+                )
+            console.print()
         else:
             console.print("\n[yellow]Nothing was written to .env.[/yellow]\n")
     finally:

@@ -126,9 +126,28 @@ _client: openai.OpenAI | None = None
 _effort_supported = True
 
 
+# Latched on when the endpoint proves it ignores response_format, or forced by
+# LLM_STRUCTURED_MODE=prompt. Initialised lazily on first use so importing this
+# module never requires config to be loadable.
+_prompt_mode: bool | None = None
+
+
+def _in_prompt_mode() -> bool:
+    global _prompt_mode
+    if _prompt_mode is None:
+        _prompt_mode = settings().llm_structured_mode == "prompt"
+    return _prompt_mode
+
+
 def reset_effort_probe() -> None:
-    global _effort_supported
+    global _effort_supported, _prompt_mode
     _effort_supported = True
+    _prompt_mode = settings().llm_structured_mode == "prompt"
+
+
+def structured_mode() -> str:
+    """Which structured-output strategy is currently in force."""
+    return "prompt" if _in_prompt_mode() else "native"
 
 
 def client() -> openai.OpenAI:
@@ -214,6 +233,96 @@ def _is_unsupported_effort_error(exc: Exception) -> bool:
     )
 
 
+# ── prompt-mode structured output ─────────────────────────────────────────────
+#
+# Some OpenAI-compatible endpoints accept `response_format` and ignore it,
+# answering in prose. AgentRouter does this on every model it offers. For those,
+# the schema is described in the prompt and the reply is parsed here.
+#
+# This is strictly worse than native enforcement — the provider guarantees
+# nothing — so it is only used where native does not work.
+
+
+def _schema_instruction(schema: type[BaseModel]) -> str:
+    """Describe the required JSON shape for an endpoint that ignores schemas."""
+    import json
+
+    return (
+        "\n\n---\n\n"
+        "# OUTPUT FORMAT — MANDATORY\n\n"
+        "Reply with a single raw JSON object and nothing else. No prose before "
+        "or after it, no explanation, no markdown code fences.\n\n"
+        "It must validate against this JSON Schema exactly. Include every "
+        "required key. Use null for values you do not know — never omit a key "
+        "and never invent a value to fill it.\n\n"
+        f"```json\n{json.dumps(schema.model_json_schema(), indent=2)}\n```"
+    )
+
+
+def extract_json(text: str) -> str | None:
+    """Pull the first complete JSON object out of a model reply.
+
+    Handles the three things models actually do when asked for raw JSON: wrap
+    it in ``` fences, prefix it with a sentence, or both. Brace counting is
+    string-aware, because a ``}`` inside a quoted value would otherwise
+    terminate the object early — which is not hypothetical here, where the
+    payloads contain company descriptions and email bodies.
+
+    Returns None if no balanced object is present.
+    """
+    if not text:
+        return None
+
+    cleaned = text.strip()
+
+    # Strip a fenced block, keeping only its contents.
+    if cleaned.startswith("```"):
+        newline = cleaned.find("\n")
+        if newline != -1:
+            cleaned = cleaned[newline + 1 :]
+        if cleaned.rstrip().endswith("```"):
+            cleaned = cleaned.rstrip()[:-3]
+        cleaned = cleaned.strip()
+
+    start = cleaned.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(cleaned)):
+        char = cleaned[index]
+        if escaped:
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return cleaned[start : index + 1]
+    return None
+
+
+def _parse_prompt_mode(text: str, schema: type[T], label: str) -> T:
+    payload = extract_json(text)
+    if payload is None:
+        raise ValueError(
+            f"{label}: no JSON object found in the reply "
+            f"(began {text[:120]!r})"
+        )
+    return schema.model_validate_json(payload)
+
+
 def structured_call(
     *,
     system: str,
@@ -225,27 +334,62 @@ def structured_call(
 ) -> T:
     """Run one call and return a validated instance of ``schema``.
 
+    Uses the provider's native ``response_format`` where it works, and falls
+    back to describing the schema in the prompt where it does not. See
+    ``LLM_STRUCTURED_MODE``.
+
     Raises :class:`RefusalError` if the model declines, so callers can skip the
     offending item and continue the run.
     """
-    global _effort_supported
+    global _prompt_mode
 
+    if not _in_prompt_mode():
+        try:
+            return _call_native(system, user, schema, effort, max_tokens, label)
+        except _NativeSchemaIgnored as exc:
+            if settings().llm_structured_mode == "native":
+                raise RuntimeError(
+                    f"{label}: this endpoint ignores response_format and "
+                    "LLM_STRUCTURED_MODE=native forbids the fallback. Set it to "
+                    "'auto' or 'prompt'."
+                ) from exc
+            # Latch for the rest of the run: one wasted call, not one per item.
+            log.warning(
+                "endpoint ignored response_format and replied in prose; "
+                "switching to prompt-described JSON for the rest of this run."
+            )
+            _prompt_mode = True
+
+    return _call_prompt_mode(system, user, schema, effort, max_tokens, label)
+
+
+class _NativeSchemaIgnored(RuntimeError):
+    """The endpoint accepted response_format and answered in prose anyway."""
+
+
+def _base_kwargs(
+    system: str, user: str, effort: Effort, max_tokens: int
+) -> dict[str, Any]:
     kwargs: dict[str, Any] = {
         "model": model(),
         "messages": [
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
-        "response_format": schema,
         # `max_completion_tokens` supersedes `max_tokens`, which reasoning
         # models reject outright.
         "max_completion_tokens": max_tokens,
     }
     if _effort_supported:
         kwargs["reasoning_effort"] = _EFFORT_MAP[effort]
+    return kwargs
 
+
+def _send(call, kwargs: dict[str, Any], label: str):
+    """Issue a request, retrying once without reasoning_effort if rejected."""
+    global _effort_supported
     try:
-        response = client().chat.completions.parse(**kwargs)
+        return call(**kwargs)
     except openai.BadRequestError as exc:
         if not (_effort_supported and _is_unsupported_effort_error(exc)):
             raise
@@ -257,22 +401,41 @@ def structured_call(
             model(),
         )
         _effort_supported = False
-        kwargs.pop("reasoning_effort")
-        response = client().chat.completions.parse(**kwargs)
+        kwargs.pop("reasoning_effort", None)
+        return call(**kwargs)
 
-    usage.add(response.usage)
-    _check_cache_health(response.usage, label)
 
-    choice = response.choices[0]
-
+def _guard(choice, label: str, max_tokens: int) -> None:
     if choice.message.refusal:
         raise RefusalError(f"{label}: model declined — {choice.message.refusal}")
-
     if choice.finish_reason == "length":
         raise RuntimeError(
             f"{label}: hit max_completion_tokens ({max_tokens}) before finishing. "
             "The response is truncated — raise max_tokens for this stage."
         )
+
+
+def _call_native(
+    system: str, user: str, schema: type[T], effort: Effort, max_tokens: int, label: str
+) -> T:
+    kwargs = _base_kwargs(system, user, effort, max_tokens)
+    kwargs["response_format"] = schema
+
+    try:
+        response = _send(client().chat.completions.parse, kwargs, label)
+    except Exception as exc:  # noqa: BLE001
+        # The SDK raises a pydantic ValidationError when the reply is not JSON,
+        # which is what an endpoint that ignores response_format produces. That
+        # is a capability signal, not a bad response — distinguish it so `auto`
+        # can fall back rather than failing the item.
+        if "json_invalid" in str(exc) or "Invalid JSON" in str(exc):
+            raise _NativeSchemaIgnored(str(exc)[:200]) from exc
+        raise
+
+    usage.add(response.usage)
+    _check_cache_health(response.usage, label)
+    choice = response.choices[0]
+    _guard(choice, label, max_tokens)
 
     parsed = choice.message.parsed
     if parsed is None:
@@ -281,6 +444,50 @@ def structured_call(
             f"{schema.__name__} (finish_reason={choice.finish_reason})"
         )
     return parsed
+
+
+def _call_prompt_mode(
+    system: str, user: str, schema: type[T], effort: Effort, max_tokens: int, label: str
+) -> T:
+    """Describe the schema in the prompt and parse the reply ourselves.
+
+    Retries once with the parse error fed back, which recovers the common
+    near-misses (a trailing comment, a stray sentence) without a second full
+    round of the pipeline.
+    """
+    instructed = system + _schema_instruction(schema)
+    kwargs = _base_kwargs(instructed, user, effort, max_tokens)
+
+    response = _send(client().chat.completions.create, kwargs, label)
+    usage.add(response.usage)
+    _check_cache_health(response.usage, label)
+    choice = response.choices[0]
+    _guard(choice, label, max_tokens)
+
+    content = choice.message.content or ""
+    try:
+        return _parse_prompt_mode(content, schema, label)
+    except Exception as first_error:  # noqa: BLE001
+        log.info("%s: reply was not valid JSON, retrying once", label)
+
+    retry = _base_kwargs(instructed, user, effort, max_tokens)
+    retry["messages"].append({"role": "assistant", "content": content})
+    retry["messages"].append(
+        {
+            "role": "user",
+            "content": (
+                "That reply could not be parsed as JSON: "
+                f"{str(first_error)[:200]}\n\n"
+                "Reply again with only the raw JSON object. No prose, no code "
+                "fences."
+            ),
+        }
+    )
+    response = _send(client().chat.completions.create, retry, label)
+    usage.add(response.usage)
+    choice = response.choices[0]
+    _guard(choice, label, max_tokens)
+    return _parse_prompt_mode(choice.message.content or "", schema, label)
 
 
 def ping() -> str:
