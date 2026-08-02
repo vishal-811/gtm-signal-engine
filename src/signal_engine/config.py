@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     # tokens far below OpenAI: AgentRouter rejects roughly 7+ articles with a
     # misleading `content-blocked` 400, so drop this to 4 there.
     llm_extract_batch_size: int = 10
+    # Seconds before a single model call is abandoned. The SDK defaults to 600,
+    # which is unusable for a nightly job: a stalled gateway response hung a
+    # backfill for 28 minutes with no output, and GitHub Actions would have
+    # killed the whole workflow at 45. One slow call should cost one retry, not
+    # the run.
+    llm_request_timeout: float = 120.0
 
     google_sheet_id: str = ""
     google_service_account_file: str = ""
@@ -127,10 +133,17 @@ class FeedsConfig(BaseModel):
 
 
 class MarketConfig(BaseModel):
-    """One target market and every string that should resolve to it."""
+    """One target market and every string that should resolve to it.
+
+    ``tier`` breaks ties. "San Francisco, CA, United States" matches both the
+    sf-bay-area hub and the broad us-other region, and the alias lengths are
+    identical — without an explicit precedence the winner would depend on YAML
+    ordering. Lower tier wins.
+    """
 
     id: str
     label: str
+    tier: int = 1
     aliases: list[str] = Field(default_factory=list)
     countries: list[str] = Field(default_factory=list)
 

@@ -22,7 +22,9 @@ from pydantic import BaseModel, Field
 RoundStage = Literal[
     "pre-seed", "seed", "series-a", "series-b", "series-c", "later", "unknown"
 ]
-Market = Literal["sf-bay-area", "nyc-metro", "bengaluru"]
+# Market ids come from config/geo.yaml, so this is deliberately open:
+# adding a region must not require editing code.
+Market = str
 OpeningsStatus = Literal["verified", "none_found", "unverified"]
 AtsProvider = Literal["greenhouse", "lever", "ashby", "smartrecruiters"]
 

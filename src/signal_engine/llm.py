@@ -161,7 +161,11 @@ def client() -> openai.OpenAI:
             )
         # The SDK retries 429/5xx with backoff; 4 gives a daily batch job room
         # to ride out a transient overload without failing the whole run.
-        kwargs: dict[str, Any] = {"api_key": cfg.openai_api_key, "max_retries": 4}
+        kwargs: dict[str, Any] = {
+            "api_key": cfg.openai_api_key,
+            "max_retries": 4,
+            "timeout": cfg.llm_request_timeout,
+        }
         if cfg.openai_base_url.strip():
             kwargs["base_url"] = cfg.openai_base_url.strip()
         if cfg.openai_user_agent.strip():

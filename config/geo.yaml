@@ -1,14 +1,29 @@
-# Target markets. A company matches a market when any alias appears as a whole
-# phrase in its HQ city/country text AND (if `countries` is set) the country is
-# either unknown or in the list.
+# Target markets, in tiers.
 #
-# Aliases are matched case-insensitively on word boundaries, so "york" will not
-# match "New York" and "sf" will not match "sfo-adjacent".
+# A company matches when any alias appears as a whole phrase in its job-board
+# locations (preferred) or its article-stated HQ. `tier` breaks ties: "San
+# Francisco, CA, United States" matches both the sf-bay-area hub and the broad
+# us-other region with identical alias lengths, so without explicit precedence
+# the winner would depend on YAML ordering. Lower tier wins.
+#
+# Tier 1 — Hire100x's own network hubs. Best fit, scored highest in rubric.yaml.
+# Tier 2 — rest of the countries where that network already is.
+# Tier 3 — other markets that commonly hire remote US/India engineers.
+#
+# Anything matching nothing here is dropped. To stop covering a region, delete
+# it — no code change needed.
+#
+# `countries` is deliberately unset now. Job-board locations rarely name a
+# country ("Hybrid - San Francisco"), so requiring one rejected valid matches.
+#
+# Matching is case-insensitive on word boundaries, so "sf" will not match
+# "sfo-adjacent" and "york" will not match "New York".
 
 markets:
+  # ── Tier 1: network hubs ────────────────────────────────────────────────────
   - id: sf-bay-area
     label: SF Bay Area
-    countries: [united states, usa, us, u.s., u.s.a.]
+    tier: 1
     aliases:
       - san francisco
       - south san francisco
@@ -36,7 +51,7 @@ markets:
 
   - id: nyc-metro
     label: NYC Metro
-    countries: [united states, usa, us, u.s., u.s.a.]
+    tier: 1
     aliases:
       - new york
       - new york city
@@ -52,7 +67,7 @@ markets:
 
   - id: bengaluru
     label: Bengaluru
-    countries: [india, in]
+    tier: 1
     aliases:
       - bengaluru
       - bangalore
@@ -66,8 +81,153 @@ markets:
       - marathahalli
       - hebbal
 
-# Phrases that veto a match outright, checked before aliases. These are entity
-# names that contain a city name but do not indicate a company location.
+  # ── Tier 2: rest of the US and India ────────────────────────────────────────
+  - id: us-other
+    label: United States (other)
+    tier: 2
+    aliases:
+      - united states
+      - usa
+      - u.s.
+      - u.s.a.
+      - remote us
+      - remote united states
+      - seattle
+      - bellevue
+      - redmond
+      - austin
+      - boston
+      - los angeles
+      - santa monica
+      - san diego
+      - chicago
+      - denver
+      - boulder
+      - atlanta
+      - miami
+      - washington dc
+      - arlington
+      - philadelphia
+      - pittsburgh
+      - portland
+      - salt lake city
+      - phoenix
+      - dallas
+      - houston
+      - nashville
+      - raleigh
+      - durham
+      - detroit
+      - minneapolis
+
+  - id: india-other
+    label: India (other)
+    tier: 2
+    aliases:
+      - india
+      - remote india
+      - mumbai
+      - navi mumbai
+      - thane
+      - pune
+      - hyderabad
+      - gurugram
+      - gurgaon
+      - noida
+      - delhi
+      - new delhi
+      - ncr
+      - chennai
+      - kolkata
+      - ahmedabad
+      - jaipur
+      - kochi
+      - coimbatore
+      - indore
+      - chandigarh
+      - thiruvananthapuram
+
+  # ── Tier 3: other markets that hire remote US/India engineers ───────────────
+  - id: uk
+    label: United Kingdom
+    tier: 3
+    aliases:
+      - united kingdom
+      - england
+      - scotland
+      - wales
+      - london
+      - manchester
+      - birmingham
+      - bristol
+      - oxford
+      - edinburgh
+      - glasgow
+      - leeds
+
+  - id: canada
+    label: Canada
+    tier: 3
+    aliases:
+      - canada
+      - toronto
+      - vancouver
+      - montreal
+      - ottawa
+      - waterloo
+      - calgary
+
+  - id: europe
+    label: Europe
+    tier: 3
+    aliases:
+      - berlin
+      - munich
+      - hamburg
+      - amsterdam
+      - rotterdam
+      - paris
+      - dublin
+      - stockholm
+      - copenhagen
+      - oslo
+      - helsinki
+      - zurich
+      - zug
+      - geneva
+      - barcelona
+      - madrid
+      - lisbon
+      - porto
+      - milan
+      - warsaw
+      - prague
+      - vienna
+      - tallinn
+      - remote europe
+      - remote emea
+      - european union
+      - eu
+      - emea
+
+  - id: apac
+    label: APAC & Middle East
+    tier: 3
+    aliases:
+      - singapore
+      - hong kong
+      - tokyo
+      - seoul
+      - sydney
+      - melbourne
+      - auckland
+      - dubai
+      - abu dhabi
+      - tel aviv
+      - israel
+
+# Phrases that veto a match outright, checked before aliases. Entity names that
+# contain a city name but say nothing about where a company is.
 exclusions:
   - new york times
   - new york stock exchange

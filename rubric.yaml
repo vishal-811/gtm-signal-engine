@@ -55,14 +55,17 @@ criteria:
   - id: geo_match
     weight: 0.15
     question: >
-      Is the company headquartered in, or building an engineering hub in, the
-      SF Bay Area, NYC metro, or Bengaluru — the three markets where Hire100x's
-      network of vetted engineers actually is?
+      How well does where this company hires match where Hire100x's network of
+      engineers actually is? The pipeline reports a CONFIRMED market, usually
+      established from the locations on their live job board — trust it, and do
+      not mark a company down merely because the article never stated an HQ.
+      Score the market itself, not the certainty.
     anchors:
-      "5": "Headquarters in one of the three markets"
-      "3": "Remote-first or distributed, but with a named engineering hub in one of the three"
-      "2": "Elsewhere in the US or India, plausibly open to talent from these hubs"
-      "0": "No presence in or near any of the three markets"
+      "5": "sf-bay-area, nyc-metro, or bengaluru — a Hire100x network hub"
+      "4": "Elsewhere in the US or India (us-other, india-other), where the network already operates"
+      "3": "uk or canada — English-speaking, commonly hires remote US talent"
+      "2": "europe or apac — other regions that hire remote India engineers"
+      "0": "No market could be confirmed at all"
 
   - id: role_stack_match
     weight: 0.15

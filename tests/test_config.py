@@ -67,9 +67,26 @@ class TestShippedConfigFiles:
     def test_feeds_yaml_loads_with_at_least_one_enabled_feed(self):
         assert config.feeds_config().active
 
-    def test_geo_yaml_covers_all_three_target_markets(self):
+    def test_geo_yaml_keeps_the_three_network_hubs_at_tier_1(self):
+        markets = {m.id: m for m in config.geo_config().markets}
+        for hub in ("sf-bay-area", "nyc-metro", "bengaluru"):
+            assert markets[hub].tier == 1, f"{hub} must outrank broad regions"
+
+    def test_geo_yaml_covers_the_wider_regions(self):
         ids = {m.id for m in config.geo_config().markets}
-        assert ids == {"sf-bay-area", "nyc-metro", "bengaluru"}
+        assert {"us-other", "india-other", "uk"} <= ids
+
+    def test_every_market_id_has_a_rubric_anchor_or_is_deliberate(self):
+        # A market with no matching anchor gets scored arbitrarily by the model.
+        anchors = " ".join(
+            " ".join(c.anchors.values())
+            for c in config.rubric().criteria if c.id == "geo_match"
+        )
+        for market in config.geo_config().markets:
+            assert market.id in anchors, (
+                f"market {market.id!r} is not named in the geo_match anchors, "
+                "so the model has no guidance on how to score it"
+            )
 
     def test_eng_titles_yaml_loads(self):
         titles = config.eng_titles_config()

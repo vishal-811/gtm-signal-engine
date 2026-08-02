@@ -56,11 +56,38 @@ class TestMatchMarket:
         assert filters.match_market(city) == expected
 
     @pytest.mark.parametrize(
-        "city",
-        ["Austin", "London", "Berlin", "Mumbai", "Delhi", "Seattle", "Boston", "Toronto"],
+        "city,market",
+        [
+            ("Austin", "us-other"), ("Seattle", "us-other"), ("Boston", "us-other"),
+            ("Mumbai", "india-other"), ("Delhi", "india-other"),
+            ("London", "uk"), ("Toronto", "canada"), ("Berlin", "europe"),
+            ("Singapore", "apac"),
+        ],
     )
-    def test_rejects_out_of_market_cities(self, city):
+    def test_wider_regions_resolve_to_their_tier(self, city, market):
+        assert filters.match_market(city) == market
+
+    @pytest.mark.parametrize(
+        "city", ["Lagos", "Nairobi", "Karachi", "Bogota", "Almaty"]
+    )
+    def test_rejects_genuinely_uncovered_cities(self, city):
         assert filters.match_market(city) is None
+
+    @pytest.mark.parametrize(
+        "location,expected",
+        [
+            # A hub must beat the broad region that contains it, even though
+            # both alias strings are the same length.
+            ("San Francisco, CA, United States", "sf-bay-area"),
+            ("New York, United States", "nyc-metro"),
+            ("Bengaluru, India", "bengaluru"),
+            # ...and a non-hub city in the same country falls to tier 2.
+            ("Austin, TX, United States", "us-other"),
+            ("Pune, India", "india-other"),
+        ],
+    )
+    def test_hub_outranks_the_region_containing_it(self, location, expected):
+        assert filters.match_market(location) == expected
 
     def test_south_san_francisco_is_in_the_bay_area(self):
         # It is a real Bay Area biotech hub, not a false positive to guard
@@ -77,13 +104,6 @@ class TestMatchMarket:
         # An entity name that contains a city name is not a location.
         assert filters.match_market("New York Times Building") is None
         assert filters.match_market("Bangalore Rural") is None
-
-    def test_country_mismatch_rejects(self):
-        # A "New York" in another country is not the NYC metro.
-        assert filters.match_market("New York", "United Kingdom") is None
-
-    def test_matching_country_accepts(self):
-        assert filters.match_market("New York", "United States") == "nyc-metro"
 
     def test_unknown_country_does_not_veto(self):
         # Feeds routinely omit the country; the city alias is signal enough.
@@ -236,7 +256,7 @@ class TestApplyGeo:
 
     def test_checks_every_location_not_just_the_first(self):
         kept, _ = filters.apply_geo(
-            [self._candidate(locations=["Berlin", "Tokyo", "Bengaluru"])]
+            [self._candidate(locations=["Lagos", "Nairobi", "Bengaluru"])]
         )
         assert kept and kept[0].market == "bengaluru"
 
@@ -258,7 +278,7 @@ class TestApplyGeo:
         assert report.matched_on_jobs == 1
 
     def test_out_of_market_is_dropped(self):
-        kept, report = filters.apply_geo([self._candidate(locations=["Berlin"])])
+        kept, report = filters.apply_geo([self._candidate(locations=["Lagos"])])
         assert kept == []
         assert report.out_of_market == 1
         assert report.location_unknown == 0
@@ -291,4 +311,7 @@ class TestMarketFromLocations:
         assert filters.market_from_locations(["Remote - San Francisco"]) == "sf-bay-area"
 
     def test_ignores_unmatched_locations(self):
-        assert filters.market_from_locations(["Remote - EMEA", "Singapore"]) is None
+        assert filters.market_from_locations(["Lagos", "Nairobi"]) is None
+
+    def test_remote_emea_resolves_to_europe(self):
+        assert filters.market_from_locations(["Remote - EMEA"]) == "europe"

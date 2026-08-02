@@ -63,7 +63,7 @@ def _phrase_pattern(phrase: str) -> re.Pattern[str]:
     matching "New York" — a plain substring check produces both false positives
     and false negatives here.
     """
-    return re.compile(rf"(?<![a-z0-9]){re.escape(phrase.lower())}(?![a-z0-9])")
+    return re.compile(rf"(?<![a-z0-9]){re.escape(_flatten(phrase))}(?![a-z0-9])")
 
 
 # Compiled once at import; the alias lists are static config.
@@ -95,29 +95,43 @@ def _country_allows(market: MarketConfig, country: str | None) -> bool:
     return any(normalized == c.strip().lower().rstrip(".") for c in market.countries)
 
 
+_SEPARATORS = re.compile(r"[\s/_|,;·•‐-―-]+")
+
+
+def _flatten(text: str) -> str:
+    """Collapse separator variation so one alias matches every spelling.
+
+    Boards write "Remote - United States", "Remote | US", "Remote/US". Without
+    this, the alias "remote united states" matches none of them — the same
+    class of bug already fixed for job titles.
+    """
+    return _SEPARATORS.sub(" ", text.lower()).strip()
+
+
 def match_market(city: str | None, country: str | None = None) -> Market | None:
-    """Resolve a location to one of the three target markets, or None."""
+    """Resolve a location string to a configured market, or None."""
     _ensure_patterns()
     if not city:
         return None
 
-    haystack = city.lower()
+    haystack = _flatten(city)
     if any(p.search(haystack) for p in _EXCLUSION_PATTERNS):
         return None
 
     geo = geo_config()
-    best: tuple[int, Market] | None = None
+    best: tuple[int, int, Market] | None = None
     for market in geo.markets:
         if not _country_allows(market, country):
             continue
         for alias, pattern in zip(market.aliases, _MARKET_PATTERNS[market.id]):
             if pattern.search(haystack):
-                # Longest alias wins: "south san francisco" should not be
-                # decided by whichever market happened to be listed first.
-                score = len(alias)
-                if best is None or score > best[0]:
-                    best = (score, market.id)  # type: ignore[assignment]
-    return best[1] if best else None
+                # Rank by tier first, then alias length. Tier keeps a hub
+                # ahead of the broad region containing it; length keeps
+                # "south san francisco" from losing to a shorter alias.
+                score = (-market.tier, len(alias))
+                if best is None or score > (best[0], best[1]):
+                    best = (score[0], score[1], market.id)
+    return best[2] if best else None
 
 
 # ── Individual predicates ─────────────────────────────────────────────────────
