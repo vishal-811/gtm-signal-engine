@@ -174,26 +174,55 @@ def check_apollo() -> CheckResult:
     return CheckResult(name, False, f"HTTP {response.status_code}: {response.text[:200]}", fix)
 
 
+def _looks_like_email(value: str) -> bool:
+    """Shape check on the sender address.
+
+    Not RFC-5322 validation and not a check that the mailbox exists — just
+    enough to catch a typo before it is signed onto every cold email that goes
+    out. Requires a non-empty local part, exactly one ``@``, and a domain with
+    at least one dot and no empty labels.
+    """
+    if not value or any(c.isspace() for c in value):
+        return False
+    parts = value.split("@")
+    if len(parts) != 2:
+        return False
+    local, domain = parts
+    if not local or not domain:
+        return False
+    labels = domain.split(".")
+    return len(labels) >= 2 and all(labels)
+
+
 def check_sender_identity() -> CheckResult:
     name = "Sender identity"
     cfg = settings()
+    fix = "Set these in .env — they sign the drafted outreach emails."
     missing = [
         field
         for field, value in (
             ("SENDER_NAME", cfg.sender_name),
             ("SENDER_TITLE", cfg.sender_title),
+            ("SENDER_EMAIL", cfg.sender_email),
         )
         if not value.strip()
     ]
     if missing:
+        return CheckResult(name, False, f"missing {', '.join(missing)}", fix)
+
+    email = cfg.sender_email.strip()
+    if not _looks_like_email(email):
         return CheckResult(
             name,
             False,
-            f"missing {', '.join(missing)}",
-            "Set these in .env — they sign the drafted outreach emails.",
+            f"SENDER_EMAIL does not look like an email address: {email!r}",
+            fix,
         )
+
     return CheckResult(
-        name, True, f"{cfg.sender_name}, {cfg.sender_title} @ {cfg.sender_company}"
+        name,
+        True,
+        f"{cfg.sender_name}, {cfg.sender_title} @ {cfg.sender_company} <{email}>",
     )
 
 

@@ -219,16 +219,38 @@ class TestDraft:
 class TestDraftSystemPrompt:
     def test_includes_the_sender_identity(self, monkeypatch):
         cfg = draft.settings()
-        monkeypatch.setattr(cfg, "sender_name", "Aarif", raising=False)
+        monkeypatch.setattr(cfg, "sender_name", "Vishal", raising=False)
         monkeypatch.setattr(cfg, "sender_title", "Founder", raising=False)
+        monkeypatch.setattr(cfg, "sender_email", "v@example.com", raising=False)
 
         rendered = draft.system_prompt()
-        assert "Aarif" in rendered and "Founder" in rendered
+        assert "Vishal" in rendered
+        assert "Founder" in rendered
+        assert "v@example.com" in rendered
 
-    def test_flags_a_missing_sender_rather_than_signing_blankly(self, monkeypatch):
-        cfg = draft.settings()
-        monkeypatch.setattr(cfg, "sender_name", "", raising=False)
-        assert "SENDER_NAME not set" in draft.system_prompt()
+    @pytest.mark.parametrize(
+        "field,marker",
+        [
+            ("sender_name", "SENDER_NAME not set"),
+            ("sender_title", "SENDER_TITLE not set"),
+            ("sender_email", "SENDER_EMAIL not set"),
+        ],
+    )
+    def test_flags_a_missing_field_rather_than_signing_blankly(
+        self, field, marker, monkeypatch
+    ):
+        # A blank signature would ship a cold email signed by nobody; the
+        # visible marker makes the misconfiguration obvious in the draft.
+        monkeypatch.setattr(draft.settings(), field, "", raising=False)
+        assert marker in draft.system_prompt()
+
+    def test_instructs_the_model_not_to_alter_the_signature(self, monkeypatch):
+        # The sender address must appear verbatim — an invented or "corrected"
+        # variant would put a wrong reply-to on real outreach.
+        monkeypatch.setattr(
+            draft.settings(), "sender_email", "v@example.com", raising=False
+        )
+        assert "Do not alter them" in draft.system_prompt()
 
     def test_carries_the_no_fabrication_rule(self):
         assert "Never state a fact that is not in the input" in draft.system_prompt()

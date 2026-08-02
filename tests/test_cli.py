@@ -26,6 +26,7 @@ def blank_settings(monkeypatch):
         "slack_webhook_url",
         "sender_name",
         "sender_title",
+        "sender_email",
     ):
         monkeypatch.setattr(cfg, field, "", raising=False)
     return cfg
@@ -53,24 +54,40 @@ class TestPreflight:
             ("google_sheet_id", "sheet123"),
             ("google_service_account_json", '{"client_email":"a@b.com"}'),
             ("slack_webhook_url", "https://hooks.slack.com/services/x"),
-            ("sender_name", "Aarif"),
+            ("sender_name", "Vishal"),
             ("sender_title", "Founder"),
+            ("sender_email", "v@example.com"),
         ):
             monkeypatch.setattr(blank_settings, field, value, raising=False)
         assert cli._preflight(dry_run=False) is None
 
-    def test_a_sender_name_without_a_title_is_still_incomplete(
-        self, blank_settings, monkeypatch
+    @pytest.mark.parametrize(
+        "omit", ["sender_name", "sender_title", "sender_email"]
+    )
+    def test_each_sender_field_is_individually_required_for_a_live_run(
+        self, omit, blank_settings, monkeypatch
     ):
         for field, value in (
             ("anthropic_api_key", "sk-test"),
             ("google_sheet_id", "s"),
             ("google_service_account_json", '{"client_email":"a@b.com"}'),
             ("slack_webhook_url", "https://hooks.slack.com/x"),
-            ("sender_name", "Aarif"),
+            ("sender_name", "Vishal"),
+            ("sender_title", "Founder"),
+            ("sender_email", "v@example.com"),
         ):
-            monkeypatch.setattr(blank_settings, field, value, raising=False)
-        assert "SENDER_NAME and SENDER_TITLE" in cli._preflight(dry_run=False)
+            monkeypatch.setattr(
+                blank_settings, field, "" if field == omit else value, raising=False
+            )
+        assert omit.upper() in cli._preflight(dry_run=False)
+
+    def test_sender_email_is_not_required_for_a_dry_run(
+        self, blank_settings, monkeypatch
+    ):
+        # Dry runs still draft, but a placeholder signature is harmless when
+        # nothing is published.
+        monkeypatch.setattr(blank_settings, "anthropic_api_key", "sk-test", raising=False)
+        assert cli._preflight(dry_run=True) is None
 
 
 class TestParser:

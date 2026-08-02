@@ -56,6 +56,7 @@ jobs:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SENDER_NAME: ${{ secrets.SENDER_NAME }}
           SENDER_TITLE: ${{ secrets.SENDER_TITLE }}
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
           APOLLO_ENABLED: ${{ vars.APOLLO_ENABLED || 'false' }}
           APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
         run: |

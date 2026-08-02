@@ -45,6 +45,7 @@ class Settings(BaseSettings):
 
     sender_name: str = ""
     sender_title: str = ""
+    sender_email: str = ""
     sender_company: str = "Hire100x"
 
     dedupe_window_days: int = 30

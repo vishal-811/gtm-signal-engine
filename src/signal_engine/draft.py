@@ -35,9 +35,11 @@ def system_prompt() -> str:
     cfg = settings()
     signature = (
         "\n\n---\n\n# SENDER\n\n"
+        "Sign the email with exactly these details. Do not alter them.\n\n"
         f"Name: {cfg.sender_name or '[SENDER_NAME not set]'}\n"
         f"Title: {cfg.sender_title or '[SENDER_TITLE not set]'}\n"
         f"Company: {cfg.sender_company}\n"
+        f"Email: {cfg.sender_email or '[SENDER_EMAIL not set]'}\n"
     )
     return prompt("draft") + signature
 

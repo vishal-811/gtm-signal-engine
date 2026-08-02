@@ -78,7 +78,20 @@ The four tabs are created automatically on first live run.
 
 #### Sender identity (required)
 
-`SENDER_NAME` and `SENDER_TITLE` in `.env`. These sign the drafted emails.
+These sign the drafted emails:
+
+```
+SENDER_NAME=Your Name
+SENDER_TITLE=Founder
+SENDER_EMAIL=you@example.com
+SENDER_COMPANY=Hire100x
+```
+
+`SENDER_EMAIL` is the address you will actually send from. The pipeline never
+sends anything itself — it writes the drafts so they read and sign correctly
+when you paste them into that account. `verify-credentials` shape-checks the
+address, because a typo here would be signed onto every cold email that goes
+out.
 
 #### Apollo (optional)
 
@@ -199,7 +212,7 @@ Repository secrets required:
 | `GOOGLE_SHEET_ID` | |
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | The **full contents** of the JSON file — Actions can't mount a file |
 | `SLACK_WEBHOOK_URL` | |
-| `SENDER_NAME`, `SENDER_TITLE` | |
+| `SENDER_NAME`, `SENDER_TITLE`, `SENDER_EMAIL` | |
 | `APOLLO_API_KEY` | Only if you set the `APOLLO_ENABLED` repo variable to `true` |
 
 Scheduled runs are always live. The **Run workflow** button defaults to a dry
@@ -212,7 +225,7 @@ posts to Slack, so a broken cron is never mistaken for a quiet day.
 ## Development
 
 ```bash
-.venv/bin/pytest              # 247 tests, no network, no API calls, no cost
+.venv/bin/pytest              # 294 tests, no network, no API calls, no cost
 ```
 
 The suite runs entirely on recorded fixtures: real RSS XML, and real Greenhouse,

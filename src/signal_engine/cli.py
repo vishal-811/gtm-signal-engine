@@ -78,6 +78,7 @@ def cmd_show_config(_args: argparse.Namespace) -> int:
     console.print("\n[bold]Settings[/bold]")
     settings_table = Table(show_header=False, box=None, padding=(0, 2))
     settings_table.add_row("Sender", f"{cfg.sender_name or '—'}, {cfg.sender_title or '—'}")
+    settings_table.add_row("Sender email", cfg.sender_email or "—")
     settings_table.add_row("Company", cfg.sender_company)
     settings_table.add_row("Apollo", "enabled" if cfg.apollo_enabled else "disabled")
     settings_table.add_row("Dedupe window", f"{cfg.dedupe_window_days} days")
@@ -384,8 +385,13 @@ def _preflight(dry_run: bool) -> str | None:
             missing.append("GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON")
         if not cfg.slack_webhook_url:
             missing.append("SLACK_WEBHOOK_URL")
-        if not cfg.sender_name or not cfg.sender_title:
-            missing.append("SENDER_NAME and SENDER_TITLE")
+        for var, value in (
+            ("SENDER_NAME", cfg.sender_name),
+            ("SENDER_TITLE", cfg.sender_title),
+            ("SENDER_EMAIL", cfg.sender_email),
+        ):
+            if not value.strip():
+                missing.append(var)
     return ", ".join(missing) if missing else None
 
 

@@ -44,7 +44,10 @@ a yes/no question they can answer in one line. Never two asks.
 - No em-dashes, no rhetorical questions, no "Hope this finds you well".
 - Do not use the recipient's name — you do not know who it is. Open with the
   substance instead of a salutation line, or use a neutral "Hi there".
-- Sign with the sender name, title, and company given below.
+- Sign off with the sender's name, then title and company on the next line,
+  then the sender's email address on its own line. Use exactly the values given
+  in the SENDER section below — never a variation, an alias, or a placeholder.
+  The signature counts toward the 90-word limit.
 
 ## Fields
 
