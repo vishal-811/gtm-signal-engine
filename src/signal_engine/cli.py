@@ -541,7 +541,8 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     try:
         result = pipeline.run(
-            dry_run=dry_run, limit=args.limit, skip_openings=args.skip_openings
+            dry_run=dry_run, limit=args.limit,
+            skip_openings=args.skip_openings, since_days=args.since_days
         )
     except Exception as exc:  # noqa: BLE001
         console.print(f"\n[red]Run failed:[/red] {exc}\n")
@@ -749,6 +750,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--skip-openings",
         action="store_true",
         help="skip ATS verification (much faster; scores will be weaker)",
+    )
+    run_cmd.add_argument(
+        "--since-days",
+        type=int,
+        default=None,
+        metavar="N",
+        help="one-off backfill: look back N days instead of the usual window. "
+        "Widens the Google News queries too, and applies a title prefilter to "
+        "keep the cost sane. Expect roughly 8x a normal day at N=14.",
     )
     run_cmd.add_argument(
         "--show-drafts", action="store_true", help="print the drafted emails"

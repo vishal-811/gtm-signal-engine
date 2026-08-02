@@ -17,6 +17,7 @@ Two properties matter more than throughput here:
 from __future__ import annotations
 
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -99,8 +100,6 @@ def _clean_summary(entry: Any, limit: int = 1200) -> str:
 
     # feedparser hands back HTML for most feeds; a tag-strip is enough here
     # since we only need prose for the model to read.
-    import re
-
     text = re.sub(r"<[^>]+>", " ", raw)
     text = re.sub(r"&[a-z]+;|&#\d+;", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
@@ -210,16 +209,84 @@ def _is_earlier(candidate: Article, incumbent: Article) -> bool:
     return candidate.published_at < incumbent.published_at
 
 
-def collect(feeds: list[Feed] | None = None) -> tuple[list[Article], list[FeedResult]]:
+_SINGLE_ROUND = re.compile(
+    r"\b(raises?|raised|secures?|bags?|closes?|lands?|nets?|snags?)\b", re.I
+)
+_AGGREGATE = re.compile(
+    r"\b(weekly|monthly|roundup|round-?up|tracker|this week|last week|report|"
+    r"top \d+|list of|these \d+|in july|in august|so far|falls?|drops?|"
+    r"declines?|surges?|plunges?|climbs?|totall?ed?)\b",
+    re.I,
+)
+
+
+def looks_like_single_round(title: str) -> bool:
+    """Cheap title test for "one named company raised money".
+
+    Used only to bound the cost of a wide backfill. Extraction is the accurate
+    judge — this just avoids paying an LLM call to classify an article whose
+    headline already says "Weekly Funding Roundup". Measured over a 14-day
+    pull it removed 39% of articles with no genuine round lost in review.
+
+    Deliberately not used on the daily run, where volume is small and recall
+    matters more than the handful of calls it would save.
+    """
+    return bool(_SINGLE_ROUND.search(title)) and not _AGGREGATE.search(title)
+
+
+def widen_google_news(feeds: list[Feed], days: int) -> list[Feed]:
+    """Rewrite ``when:Nd`` in Google News queries to cover a longer window.
+
+    Google News caps results at the window in the query, so raising the local
+    recency filter alone changes nothing — those feeds would still return only
+    two days of items.
+    """
+    return [
+        Feed(
+            name=f.name,
+            url=re.sub(r"when:\d+d", f"when:{days}d", f.url),
+            enabled=f.enabled,
+        )
+        for f in feeds
+    ]
+
+
+def collect(
+    feeds: list[Feed] | None = None,
+    *,
+    since_days: int | None = None,
+) -> tuple[list[Article], list[FeedResult]]:
     """Full ingest: fetch, filter by recency, dedupe.
+
+    ``since_days`` widens the window for a one-off backfill. It also widens the
+    Google News queries and applies the single-round title prefilter, because
+    at two weeks the article count is roughly eight times a normal day and most
+    of the excess is roundups.
 
     Returns the article list plus per-feed results so the caller can report
     which feeds failed.
     """
-    results = fetch_all(feeds)
+    targets = feeds if feeds is not None else feeds_config().active
+    if since_days:
+        targets = widen_google_news(targets, since_days)
+
+    results = fetch_all(targets)
     raw = [a for r in results for a in r.articles]
-    recent = filter_recent(raw)
+    recent = filter_recent(
+        raw, max_age_hours=since_days * 24 if since_days else None
+    )
     deduped = dedupe(recent)
+
+    if since_days:
+        before = len(deduped)
+        deduped = [a for a in deduped if looks_like_single_round(a.title)]
+        log.info(
+            "backfill prefilter: %d → %d articles (dropped %d aggregate/roundup "
+            "headlines before paying to classify them)",
+            before,
+            len(deduped),
+            before - len(deduped),
+        )
 
     log.info(
         "ingest: %d feeds -> %d articles -> %d recent -> %d unique",

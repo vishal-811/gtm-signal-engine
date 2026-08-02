@@ -40,6 +40,7 @@ def run(
     dry_run: bool = True,
     limit: int | None = None,
     skip_openings: bool = False,
+    since_days: int | None = None,
 ) -> RunResult:
     """Execute one full pipeline run."""
     started = datetime.now(timezone.utc)
@@ -69,7 +70,7 @@ def run(
         )
 
     # ── 1. Ingest ─────────────────────────────────────────────────────────────
-    articles, feed_results = rss.collect()
+    articles, feed_results = rss.collect(since_days=since_days)
     stats.articles_fetched = sum(len(r.articles) for r in feed_results)
     stats.articles_after_dedupe = len(articles)
     for result in feed_results:
@@ -125,7 +126,14 @@ def run(
             sum(1 for c in candidates if c.openings and c.openings.status == "unverified"),
         )
         if sheets_client and newly_discovered:
-            sheets_client.upsert_ats_cache(newly_discovered)
+            # Caching board tokens is a latency optimisation for future runs.
+            # A transient Sheets error here once killed a run that had already
+            # paid for every extraction call — never worth losing the work.
+            try:
+                sheets_client.upsert_ats_cache(newly_discovered)
+            except Exception as exc:  # noqa: BLE001
+                stats.errors.append(f"ats_cache write: {exc}")
+                log.warning("could not update the ATS cache: %s", exc)
 
     # ── 6. Geography ──────────────────────────────────────────────────────────
     candidates, geo_report = filters.apply_geo(candidates)

@@ -17,6 +17,7 @@ persistent volume and no commit-back to git.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import date, datetime
 from typing import Any
 
@@ -69,6 +70,33 @@ _TABS = {
     ATS_CACHE: ATS_CACHE_HEADERS,
     RUNS: RUNS_HEADERS,
 }
+
+
+def _with_retry(operation, *, attempts: int = 3, label: str = "sheets"):
+    """Retry a Sheets call through transient network and 5xx failures.
+
+    Observed live: a `Connection reset by peer` mid-run aborted a pipeline that
+    had already spent every extraction call. Google's own quota guidance is to
+    back off and retry, and these operations are all idempotent enough to be
+    safe to repeat.
+    """
+    delay = 2.0
+    for attempt in range(1, attempts + 1):
+        try:
+            return operation()
+        except Exception as exc:  # noqa: BLE001
+            transient = any(
+                marker in str(exc).lower()
+                for marker in ("connection", "timeout", "reset", "503", "500", "429")
+            )
+            if not transient or attempt == attempts:
+                raise
+            log.warning(
+                "%s attempt %d/%d failed (%s); retrying in %.0fs",
+                label, attempt, attempts, type(exc).__name__, delay,
+            )
+            time.sleep(delay)
+            delay *= 2
 
 
 class SheetsClient:
@@ -386,7 +414,10 @@ class SheetsClient:
             _shortlist_row(candidate, rank, run_date)
             for rank, candidate in enumerate(candidates, start=1)
         ]
-        self._tab(SHORTLIST).append_rows(rows, value_input_option="RAW")
+        _with_retry(
+            lambda: self._tab(SHORTLIST).append_rows(rows, value_input_option="RAW"),
+            label="append_shortlist",
+        )
         return len(rows)
 
     def upsert_seen(self, candidates: list[Candidate], run_date: date) -> None:
