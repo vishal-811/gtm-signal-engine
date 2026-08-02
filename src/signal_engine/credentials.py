@@ -146,15 +146,23 @@ def check_google_sheets() -> CheckResult:
 
 
 def check_slack() -> CheckResult:
-    name = "Slack"
+    name = "Slack (optional)"
     fix = (
         "https://api.slack.com/apps → Create New App → From scratch → "
         "Incoming Webhooks → Activate → Add New Webhook to Workspace → pick a "
-        "channel → copy the URL into SLACK_WEBHOOK_URL"
+        "channel → copy the URL into SLACK_WEBHOOK_URL. Incoming webhooks are "
+        "free on every Slack plan."
     )
     url = settings().slack_webhook_url
     if not url:
-        return CheckResult(name, False, "SLACK_WEBHOOK_URL is not set", fix)
+        # Optional by design: the Sheet is the deliverable and the state store.
+        # Slack is a convenience notification on top of it.
+        return CheckResult(
+            name,
+            True,
+            "not configured — the shortlist still goes to the Sheet",
+            skipped=True,
+        )
     if not url.startswith("https://hooks.slack.com/"):
         return CheckResult(
             name, False, "does not look like an incoming-webhook URL", fix

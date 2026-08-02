@@ -164,11 +164,14 @@ def _finish(
             log.exception("failed writing to Sheets")
 
         stats.finished_at = datetime.now(timezone.utc)
-        try:
-            slack.send_digest(passing, run_date, sheet_url, stats)
-        except Exception as exc:  # noqa: BLE001
-            stats.errors.append(f"slack post: {exc}")
-            log.exception("failed posting to Slack")
+        if settings().slack_webhook_url:
+            try:
+                slack.send_digest(passing, run_date, sheet_url, stats)
+            except Exception as exc:  # noqa: BLE001
+                stats.errors.append(f"slack post: {exc}")
+                log.exception("failed posting to Slack")
+        else:
+            log.info("no Slack webhook configured; skipping the digest")
 
         # Written last so it records the outcome of the writes above.
         try:

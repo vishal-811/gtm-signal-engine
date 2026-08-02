@@ -491,8 +491,7 @@ def _preflight(dry_run: bool) -> str | None:
             missing.append("GOOGLE_SHEET_ID")
         if not cfg.google_credentials_info():
             missing.append("GOOGLE_SERVICE_ACCOUNT_FILE or GOOGLE_SERVICE_ACCOUNT_JSON")
-        if not cfg.slack_webhook_url:
-            missing.append("SLACK_WEBHOOK_URL")
+        # Slack is optional — the Sheet is the deliverable.
         for var, value in (
             ("SENDER_NAME", cfg.sender_name),
             ("SENDER_TITLE", cfg.sender_title),
@@ -595,6 +594,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             console.print(f"  · {err}")
     if result.sheet_url:
         console.print(f"[dim]{result.sheet_url}[/dim]")
+    if not dry_run and not config.settings().slack_webhook_url:
+        console.print(
+            "[dim]Slack not configured — digest skipped, shortlist is in the "
+            "Sheet.[/dim]"
+        )
     console.print()
     return 0
 

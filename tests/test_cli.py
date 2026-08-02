@@ -45,8 +45,23 @@ class TestPreflight:
         missing = cli._preflight(dry_run=False)
 
         assert "GOOGLE_SHEET_ID" in missing
-        assert "SLACK_WEBHOOK_URL" in missing
         assert "SENDER_NAME" in missing
+
+    def test_slack_is_optional_for_a_live_run(self, blank_settings, monkeypatch):
+        # The Sheet is the deliverable and the state store; Slack is a
+        # convenience notification layered on top. Requiring it would block a
+        # perfectly good Sheets-only setup.
+        for field, value in (
+            ("openai_api_key", "sk-test"),
+            ("google_sheet_id", "s"),
+            ("google_service_account_json", '{"client_email":"a@b.com"}'),
+            ("sender_name", "Ankur"),
+            ("sender_title", "Founder"),
+            ("sender_email", "ankur@hire100x.io"),
+            ("slack_webhook_url", ""),
+        ):
+            monkeypatch.setattr(blank_settings, field, value, raising=False)
+        assert cli._preflight(dry_run=False) is None
 
     def test_live_run_passes_when_everything_is_set(self, blank_settings, monkeypatch):
         for field, value in (
@@ -54,7 +69,7 @@ class TestPreflight:
             ("google_sheet_id", "sheet123"),
             ("google_service_account_json", '{"client_email":"a@b.com"}'),
             ("slack_webhook_url", "https://hooks.slack.com/services/x"),
-            ("sender_name", "Vishal"),
+            ("sender_name", "Ankur"),
             ("sender_title", "Founder"),
             ("sender_email", "v@example.com"),
         ):
@@ -72,7 +87,7 @@ class TestPreflight:
             ("google_sheet_id", "s"),
             ("google_service_account_json", '{"client_email":"a@b.com"}'),
             ("slack_webhook_url", "https://hooks.slack.com/x"),
-            ("sender_name", "Vishal"),
+            ("sender_name", "Ankur"),
             ("sender_title", "Founder"),
             ("sender_email", "v@example.com"),
         ):
