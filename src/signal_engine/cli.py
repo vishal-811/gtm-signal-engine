@@ -219,6 +219,98 @@ def cmd_check_feeds(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+# ── check-endpoint ────────────────────────────────────────────────────────────
+
+
+def cmd_check_endpoint(args: argparse.Namespace) -> int:
+    """Try a key and base URL without saving them anywhere.
+
+    Exists so credentials can be tested by trial and error — which is what
+    bringing up a new gateway involves — without a bad one landing in .env, and
+    without the key going through a shell history or a chat window.
+    """
+    import getpass
+
+    from . import llm
+
+    key = args.key or getpass.getpass("API key (hidden, then Enter): ").strip()
+    if not key:
+        console.print("[red]No key given.[/red]")
+        return 2
+
+    cfg = config.settings()
+    saved = (cfg.openai_api_key, cfg.openai_base_url, cfg.openai_model)
+    cfg.openai_api_key = key
+    cfg.openai_base_url = args.base_url or ""
+    if args.model:
+        cfg.openai_model = args.model
+    llm.reset_client()
+    llm.reset_usage()
+    llm.reset_effort_probe()
+
+    console.print(f"\n[bold]Endpoint[/bold]  {llm.endpoint()}")
+    console.print(f"[bold]Model[/bold]     {cfg.openai_model}\n")
+
+    exit_code = 0
+    try:
+        # 1. Can we reach it and enumerate models?
+        try:
+            models = llm.available_models(limit=1000)
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[red]✗[/red] model list: {type(exc).__name__}: {str(exc)[:200]}")
+            models = None
+            exit_code = 1
+        else:
+            console.print(f"[green]✓[/green] model list: {len(models)} models reachable")
+            if args.list_models:
+                for m in models:
+                    console.print(f"      {m}")
+            elif models:
+                console.print(f"      e.g. {', '.join(models[:8])}")
+
+        # 2. Is the configured model actually one of them?
+        if models is not None:
+            if cfg.openai_model in models:
+                console.print(f"[green]✓[/green] model '{cfg.openai_model}' is available")
+            else:
+                console.print(f"[red]✗[/red] model '{cfg.openai_model}' NOT in the list")
+                near = [m for m in models if cfg.openai_model.lower() in m.lower()]
+                if near:
+                    console.print(f"      closest matches: {', '.join(near[:8])}")
+                console.print("      re-run with --list-models to see everything")
+                exit_code = 1
+
+        # 3. The capability the pipeline actually depends on.
+        ok, detail = llm.probe_structured_output()
+        if ok:
+            console.print(f"[green]✓[/green] strict structured output: {detail}")
+        else:
+            console.print(f"[red]✗[/red] strict structured output: {detail}")
+            console.print(
+                "      Every stage needs this. An endpoint that fails here "
+                "cannot run the pipeline."
+            )
+            exit_code = 1
+
+        if llm.usage.calls:
+            console.print(f"\n[dim]{llm.usage.summary()}[/dim]")
+
+        if exit_code == 0:
+            console.print(
+                "\n[green bold]All checks passed.[/green bold] Put these in .env:"
+            )
+            console.print(f"  OPENAI_BASE_URL={args.base_url or ''}")
+            console.print(f"  OPENAI_MODEL={cfg.openai_model}")
+            console.print("  OPENAI_API_KEY=<the key you just entered>\n")
+        else:
+            console.print("\n[yellow]Nothing was written to .env.[/yellow]\n")
+    finally:
+        cfg.openai_api_key, cfg.openai_base_url, cfg.openai_model = saved
+        llm.reset_client()
+
+    return exit_code
+
+
 # ── check-openings ────────────────────────────────────────────────────────────
 
 
@@ -524,6 +616,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="also print the N most recent deduped article titles",
     )
     check.set_defaults(func=cmd_check_feeds)
+
+    endpoint_cmd = subparsers.add_parser(
+        "check-endpoint",
+        help="try an API key / base URL without saving them (for bringing up a gateway)",
+    )
+    endpoint_cmd.add_argument(
+        "--base-url",
+        default=None,
+        metavar="URL",
+        help="OpenAI-compatible endpoint, e.g. https://agentrouter.org/v1. "
+        "Omit for OpenAI direct.",
+    )
+    endpoint_cmd.add_argument(
+        "--model", default=None, help="model id to test (default: OPENAI_MODEL)"
+    )
+    endpoint_cmd.add_argument(
+        "--key",
+        default=None,
+        help="API key. Omit to be prompted with hidden input, which keeps it "
+        "out of your shell history.",
+    )
+    endpoint_cmd.add_argument(
+        "--list-models", action="store_true", help="print every available model id"
+    )
+    endpoint_cmd.set_defaults(func=cmd_check_endpoint)
 
     openings_cmd = subparsers.add_parser(
         "check-openings", help="run the ATS openings check for one company"
