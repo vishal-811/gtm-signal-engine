@@ -42,6 +42,21 @@ feeds:
   - name: YourStory
     url: https://yourstory.com/feed
 
+  # ── Funding-dedicated publishers ────────────────────────────────────────────
+  # Added because Google News RSS carries titles only (see below): its items
+  # average ~84 characters of summary versus ~1,100 from a direct publisher.
+  # Extraction cannot read a headline and tell you where a company is based, so
+  # every Google-News-only article dies at the geography filter. These feeds
+  # supply real article bodies, and they are funding-dense.
+  - name: Crunchbase News
+    url: https://news.crunchbase.com/feed/
+
+  - name: TechStartups
+    url: https://techstartups.com/feed/
+
+  - name: SiliconANGLE
+    url: https://siliconangle.com/feed/
+
   # ── Google News keyword queries (see gotcha above) ──────────────────────────
   - name: GNews - Series A
     url: https://news.google.com/rss/search?q=%22raises%22+%22Series+A%22+startup+when:2d&hl=en-US&gl=US&ceid=US:en
