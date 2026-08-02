@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     )
 
     openai_api_key: str = ""
+    # Point at an OpenAI-compatible gateway (AgentRouter, OpenRouter, a local
+    # proxy) instead of OpenAI itself. Blank = api.openai.com. Gateways vary in
+    # what they actually implement, so `verify-credentials` probes the features
+    # this pipeline depends on rather than trusting the "OpenAI-compatible"
+    # label.
+    openai_base_url: str = ""
     # Configurable because OpenAI renames and retires models frequently.
     # `verify-credentials` prints the ids this key can actually reach.
     openai_model: str = "gpt-5"

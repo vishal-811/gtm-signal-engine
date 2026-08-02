@@ -134,16 +134,31 @@ def reset_effort_probe() -> None:
 def client() -> openai.OpenAI:
     global _client
     if _client is None:
-        key = settings().openai_api_key
-        if not key:
+        cfg = settings()
+        if not cfg.openai_api_key:
             raise RuntimeError(
                 "OPENAI_API_KEY is not set. Copy .env.example to .env and add a "
                 "key from https://platform.openai.com/api-keys"
             )
         # The SDK retries 429/5xx with backoff; 4 gives a daily batch job room
         # to ride out a transient overload without failing the whole run.
-        _client = openai.OpenAI(api_key=key, max_retries=4)
+        kwargs: dict[str, Any] = {"api_key": cfg.openai_api_key, "max_retries": 4}
+        if cfg.openai_base_url.strip():
+            kwargs["base_url"] = cfg.openai_base_url.strip()
+        _client = openai.OpenAI(**kwargs)
     return _client
+
+
+def reset_client() -> None:
+    """Drop the cached client. Needed when settings change within a process."""
+    global _client
+    _client = None
+
+
+def endpoint() -> str:
+    """Human-readable description of where calls are going."""
+    base = settings().openai_base_url.strip()
+    return base or "https://api.openai.com/v1 (OpenAI direct)"
 
 
 def model() -> str:
@@ -260,6 +275,43 @@ def ping() -> str:
         max_completion_tokens=16,
     )
     return response.model
+
+
+class _ProbeAnswer(BaseModel):
+    """Trivial schema used only by :func:`probe_structured_output`."""
+
+    city: str
+    population_is_over_one_million: bool
+
+
+def probe_structured_output() -> tuple[bool, str]:
+    """Verify the endpoint really implements strict JSON-schema output.
+
+    Every stage of this pipeline depends on it, and it is the capability that
+    OpenAI-compatible gateways most often omit or implement partially — a
+    gateway can pass a chat-completion smoke test and still ignore
+    ``response_format``, which would surface later as parse failures on every
+    single article rather than as a clear setup error.
+
+    Costs one tiny call. Returns (ok, detail).
+    """
+    try:
+        result = structured_call(
+            system="You answer factual questions. Be accurate.",
+            user="What is the capital of France, and does it have over 1 million people?",
+            schema=_ProbeAnswer,
+            effort="low",
+            max_tokens=2000,
+            label="probe",
+        )
+    except RefusalError as exc:
+        return False, f"model refused the probe: {exc}"
+    except Exception as exc:  # noqa: BLE001 - any failure here is disqualifying
+        return False, f"{type(exc).__name__}: {str(exc)[:220]}"
+
+    if not result.city:
+        return False, "returned a valid shape but empty content"
+    return True, f"strict schema honoured (probe answered {result.city!r})"
 
 
 def available_models(limit: int = 40) -> list[str]:

@@ -41,27 +41,43 @@ def check_openai() -> CheckResult:
 
     from . import llm
 
+    where = llm.endpoint()
+
     # Listed first: if OPENAI_MODEL is wrong, the ping fails with a bare 404
     # and the useful information is the set of ids this key can actually use.
+    # A gateway may not implement /v1/models at all, which is not fatal.
+    models: list[str] | None
     try:
-        models = llm.available_models()
+        models = llm.available_models(limit=500)
     except Exception as exc:  # noqa: BLE001
-        return CheckResult(name, False, f"{type(exc).__name__}: {exc}", fix)
+        models = None
+        model_note = f"model list unavailable ({type(exc).__name__})"
+    else:
+        model_note = f"{len(models)} models listed"
 
-    if cfg.openai_model not in models:
+    if models is not None and cfg.openai_model not in models:
         preview = ", ".join(models[:12]) or "(none returned)"
         return CheckResult(
             name,
             False,
-            f"OPENAI_MODEL={cfg.openai_model!r} is not available to this key.\n"
+            f"OPENAI_MODEL={cfg.openai_model!r} is not available at {where}.\n"
             f"     Models you can use: {preview}",
             "Set OPENAI_MODEL in .env to one of the ids listed above.",
         )
 
-    try:
-        responded = llm.ping()
-    except Exception as exc:  # noqa: BLE001
-        return CheckResult(name, False, f"{type(exc).__name__}: {exc}", fix)
+    # The capability the whole pipeline rests on. Checked explicitly because an
+    # endpoint can pass a plain chat call and still ignore response_format,
+    # which would otherwise surface as parse failures on every article.
+    ok, detail = llm.probe_structured_output()
+    if not ok:
+        return CheckResult(
+            name,
+            False,
+            f"reached {where}, but strict structured output failed: {detail}",
+            "Every stage needs strict JSON-schema output. If this endpoint does "
+            "not support it, switch OPENAI_BASE_URL back to OpenAI direct "
+            "(leave it blank) or pick a model on this gateway that does.",
+        )
 
     rates = (
         "cost estimates on"
@@ -69,7 +85,9 @@ def check_openai() -> CheckResult:
         else "cost estimates off (set OPENAI_*_COST_PER_MTOK)"
     )
     return CheckResult(
-        name, True, f"reachable, responded as {responded} · {rates}"
+        name,
+        True,
+        f"{where} · model {cfg.openai_model} · {model_note} · {detail} · {rates}",
     )
 
 
