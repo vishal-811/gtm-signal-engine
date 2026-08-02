@@ -4,19 +4,27 @@ This is the load-bearing hiring signal in the whole pipeline. A funding round
 says a company *has money*; an open backend role posted last Tuesday says they
 are *spending it on engineers right now*.
 
-Three providers are supported, each verified against a live board:
+Job locations are also the pipeline's geography signal — funding articles
+almost never state where a company is based, but a board always says where it
+is hiring.
 
-===========  ==========================================================
-Greenhouse   ``boards-api.greenhouse.io/v1/boards/{token}/jobs``
-Lever        ``api.lever.co/v0/postings/{token}?mode=json``
-Ashby        ``api.ashbyhq.com/posting-api/job-board/{token}``
-===========  ==========================================================
+Four providers are supported, each verified against a live board:
 
-All three are public and unauthenticated. Workable is deliberately absent: its
-widget endpoint returned 404 for every token tried *and* for a control, so its
-response shape could not be verified. Adding an unverified client would produce
-silent ``unverified`` results that look like "no board" rather than "broken
-code". Add it when a real Workable board is available to test against.
+================  =====================================================
+Greenhouse        ``boards-api.greenhouse.io/v1/boards/{token}/jobs``
+Lever             ``api.lever.co/v0/postings/{token}?mode=json``
+Ashby             ``api.ashbyhq.com/posting-api/job-board/{token}``
+SmartRecruiters   ``api.smartrecruiters.com/v1/companies/{token}/postings``
+================  =====================================================
+
+All four are public and unauthenticated. SmartRecruiters was added to cover
+Bengaluru: the other three skew American, and Zepto among others has no board
+on any of them, which left a hole in a target market.
+
+Workable is deliberately absent — its widget endpoint returned 404 for every
+token tried *and* for a control, so its response shape could not be verified.
+An unverified client would produce silent ``unverified`` results that look like
+"no board" rather than "broken code".
 
 A company where no board is found is reported ``unverified``, never dropped —
 plenty of seed-stage teams hire off a Notion page, and a missing board is
@@ -55,6 +63,7 @@ _BOARD_LINK_PATTERNS: list[tuple[AtsProvider, re.Pattern[str]]] = [
     ("greenhouse", re.compile(r"boards\.greenhouse\.io/embed/job_board/js\?for=([a-z0-9_-]+)", re.I)),
     ("lever", re.compile(r"jobs\.lever\.co/([a-z0-9_-]+)", re.I)),
     ("ashby", re.compile(r"jobs\.ashbyhq\.com/([a-z0-9_-]+)", re.I)),
+    ("smartrecruiters", re.compile(r"jobs\.smartrecruiters\.com/([A-Za-z0-9_-]+)", re.I)),
 ]
 
 # Path segments that are not board tokens even though they match the pattern.
@@ -230,16 +239,50 @@ def fetch_ashby(token: str) -> list[JobPosting] | None:
     return postings
 
 
+def fetch_smartrecruiters(token: str) -> list[JobPosting] | None:
+    """SmartRecruiters public postings.
+
+    Added because Greenhouse/Lever/Ashby skew heavily American: Zepto and
+    several other Bengaluru companies have no board on any of the three, which
+    left a hole in a target market. SmartRecruiters returns a structured
+    ``{city, region, country}`` rather than a free-text string, which is the
+    cleanest location signal of the four.
+    """
+    data = _get_json(
+        f"https://api.smartrecruiters.com/v1/companies/{token}/postings?limit=100"
+    )
+    if not isinstance(data, dict) or "content" not in data:
+        return None
+    postings = []
+    for job in data["content"]:
+        location = job.get("location") or {}
+        parts = [location.get("city"), location.get("region")]
+        country = (location.get("country") or "").upper()
+        if country and country != "US":
+            parts.append(country)
+        postings.append(
+            JobPosting(
+                title=job.get("name", ""),
+                location=", ".join(p for p in parts if p) or None,
+                url=f"https://jobs.smartrecruiters.com/{token}/{job.get('id', '')}",
+                posted_at=_parse_dt(job.get("releasedDate")),
+            )
+        )
+    return postings
+
+
 PROVIDERS: dict[AtsProvider, Callable[[str], list[JobPosting] | None]] = {
     "greenhouse": fetch_greenhouse,
     "lever": fetch_lever,
     "ashby": fetch_ashby,
+    "smartrecruiters": fetch_smartrecruiters,
 }
 
 BOARD_URLS: dict[AtsProvider, str] = {
     "greenhouse": "https://boards.greenhouse.io/{token}",
     "lever": "https://jobs.lever.co/{token}",
     "ashby": "https://jobs.ashbyhq.com/{token}",
+    "smartrecruiters": "https://jobs.smartrecruiters.com/{token}",
 }
 
 

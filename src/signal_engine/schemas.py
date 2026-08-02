@@ -24,7 +24,7 @@ RoundStage = Literal[
 ]
 Market = Literal["sf-bay-area", "nyc-metro", "bengaluru"]
 OpeningsStatus = Literal["verified", "none_found", "unverified"]
-AtsProvider = Literal["greenhouse", "lever", "ashby", "workable"]
+AtsProvider = Literal["greenhouse", "lever", "ashby", "smartrecruiters"]
 
 SCORE_MIN = 0.0
 SCORE_MAX = 5.0

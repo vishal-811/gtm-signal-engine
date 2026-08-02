@@ -347,3 +347,70 @@ class TestCheck:
 
         assert result.status == "unverified"
         assert result.board_token == "gone"
+
+
+class TestSmartRecruiters:
+    """Added to cover Bengaluru — Greenhouse/Lever/Ashby skew American and
+    several Indian companies have no board on any of them."""
+
+    PAYLOAD = {
+        "totalFound": 2,
+        "content": [
+            {
+                "id": "744000133907678",
+                "name": "Backend Engineer",
+                "releasedDate": "2026-06-24T10:00:11.853Z",
+                "location": {"city": "Bengaluru", "region": "KA", "country": "in"},
+            },
+            {
+                "id": "744000133907679",
+                "name": "Account Executive",
+                "releasedDate": "2026-06-03T10:00:11.853Z",
+                "location": {"city": "Austin", "region": "TX", "country": "us"},
+            },
+        ],
+    }
+
+    @respx.mock
+    def test_parses_the_live_response_shape(self):
+        respx.get(url__startswith="https://api.smartrecruiters.com/").mock(
+            return_value=httpx.Response(200, json=self.PAYLOAD)
+        )
+        postings = openings.fetch_smartrecruiters("acme")
+
+        assert postings is not None and len(postings) == 2
+        assert postings[0].title == "Backend Engineer"
+        assert postings[0].posted_at is not None
+
+    @respx.mock
+    def test_builds_a_readable_location_from_the_structured_field(self):
+        respx.get(url__startswith="https://api.smartrecruiters.com/").mock(
+            return_value=httpx.Response(200, json=self.PAYLOAD)
+        )
+        postings = openings.fetch_smartrecruiters("acme")
+
+        # Country appended only when it is not the US, so American locations
+        # read "Austin, TX" rather than "Austin, TX, US".
+        assert postings[0].location == "Bengaluru, KA, IN"
+        assert postings[1].location == "Austin, TX"
+
+    @respx.mock
+    def test_the_location_resolves_to_the_bengaluru_market(self):
+        from signal_engine import filters
+
+        respx.get(url__startswith="https://api.smartrecruiters.com/").mock(
+            return_value=httpx.Response(200, json=self.PAYLOAD)
+        )
+        postings = openings.fetch_smartrecruiters("acme")
+        assert filters.market_from_locations([postings[0].location]) == "bengaluru"
+
+    @respx.mock
+    def test_missing_board_returns_none(self):
+        respx.get(url__startswith="https://api.smartrecruiters.com/").mock(
+            return_value=httpx.Response(404)
+        )
+        assert openings.fetch_smartrecruiters("nope") is None
+
+    def test_is_registered_as_a_provider(self):
+        assert "smartrecruiters" in openings.PROVIDERS
+        assert "smartrecruiters" in openings.BOARD_URLS
