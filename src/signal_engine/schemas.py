@@ -229,15 +229,24 @@ class Candidate(BaseModel):
 
     @property
     def key(self) -> str:
-        """Identity for dedupe: domain if known, else normalized company name."""
+        """Identity for dedupe: domain if known, else normalized company name.
+
+        The domain is lowercased and stripped so it matches what
+        ``filters._as_key`` produces when reading the `seen` tab back. They had
+        drifted: a domain extracted as "Acme.COM" was written as "Acme.COM" and
+        read back as "acme.com", so suppression silently missed and the company
+        was posted again the next day.
+        """
         from .textutil import normalize_company
 
-        return self.event.company_domain or normalize_company(self.event.company_name)
+        domain = (self.event.company_domain or "").strip().lower()
+        return domain or normalize_company(self.event.company_name)
 
 
 class RunStats(BaseModel):
     """One row of the `runs` sheet tab — the pipeline's health dashboard."""
     extraction_failed_articles: int = 0
+    scoring_failed_candidates: int = 0
 
     started_at: datetime
     finished_at: datetime | None = None

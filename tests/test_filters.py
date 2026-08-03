@@ -394,3 +394,39 @@ def test_article_window_is_wider_than_it_is_strict_about_round_age():
     )
     # Reading further back than we would ever accept a round is pure waste.
     assert s.max_article_age_hours <= s.max_event_age_days * 24
+
+
+def test_dedupe_key_matches_what_the_seen_tab_reads_back():
+    """Candidate.key writes the ledger; _as_key reads it. They must agree.
+
+    They had drifted: a domain extracted as "Acme.COM" was stored verbatim and
+    read back lowercased, so the 30-day suppression silently missed and the
+    company was posted again the next day.
+    """
+    from signal_engine.schemas import Candidate, FundingEvent
+
+    def key_for(domain):
+        return Candidate(event=FundingEvent(
+            is_funding_announcement=True, company_name="Acme", company_domain=domain,
+            round_stage="seed", investors=[], sector="ai", one_line_description="d",
+            source_url="https://n", extraction_confidence=0.9)).key
+
+    for raw in ("Acme.COM", " acme.com ", "acme.com", "ACME.com"):
+        key = key_for(raw)
+        assert key == filters._as_key(key), f"round-trip broken for {raw!r}"
+        assert key == "acme.com"
+
+
+def test_distinct_companies_do_not_share_a_suppression_key():
+    """Stripping "AI"/"IO" collapsed Scale AI, Scale Labs and Scale onto one key.
+
+    That key drives the 30-day ledger, so an unrelated company could silently
+    hold a real lead back. True duplicates are caught later by
+    collapse_duplicate_boards(), which matches on the resolved board.
+    """
+    from signal_engine.textutil import normalize_company
+
+    assert normalize_company("Scale AI") != normalize_company("Scale")
+    assert normalize_company("Vector IO") != normalize_company("Vector")
+    # Legal-form suffixes are still noise and must still collapse.
+    assert normalize_company("Acme, Inc.") == normalize_company("Acme")

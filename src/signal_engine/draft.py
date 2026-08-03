@@ -17,7 +17,6 @@ from concurrent.futures import ThreadPoolExecutor
 from .config import prompt, settings
 from .llm import RefusalError, structured_call
 from .schemas import Candidate, Outreach
-from .textutil import truncate_words
 
 log = logging.getLogger(__name__)
 
@@ -113,17 +112,19 @@ def draft_one(candidate: Candidate) -> Candidate:
         log.error("drafting failed for %s: %s", candidate.event.company_name, exc)
         return candidate
 
-    # The word ceiling is stated in the prompt, but enforcing it here means a
-    # long draft is trimmed rather than silently shipped over-length.
+    # The ceiling is guidance in the prompt, not something to enforce by
+    # cutting. Truncating took the last words off the email — which is where the
+    # call to action and the signature live — leaving a draft that stopped
+    # mid-sentence with no sign-off. Since every draft is reviewed by a human
+    # before it is sent, slightly long is strictly better than decapitated.
     word_count = len(outreach.body.split())
     if word_count > BODY_WORD_LIMIT:
         log.info(
-            "trimming %s draft from %d to %d words",
+            "%s draft is %d words, over the %d-word guide — kept intact",
             candidate.event.company_name,
             word_count,
             BODY_WORD_LIMIT,
         )
-        outreach.body = truncate_words(outreach.body, BODY_WORD_LIMIT)
 
     candidate.outreach = outreach
     return candidate

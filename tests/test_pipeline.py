@@ -131,3 +131,48 @@ def test_a_quiet_day_records_no_failures(monkeypatch):
         batch_size=4,
     )
     assert extract_mod.failures.articles == 0
+
+
+def test_scoring_failures_are_counted_not_read_as_weak_candidates(monkeypatch):
+    """A dead scoring stage must not look like a shortlist of weak companies.
+
+    A failed score leaves composite unset, which above_threshold() reads as
+    "below the bar" — identical to a company that was scored and rejected. So a
+    provider outage produced an empty shortlist and a green run. Extraction
+    already counted its losses; scoring did not.
+    """
+    from signal_engine import score as score_mod
+
+    score_mod.reset_failures()
+    monkeypatch.setattr(
+        score_mod, "structured_call",
+        lambda **kw: (_ for _ in ()).throw(RuntimeError("gateway 503")),
+    )
+    cands = [_scoring_candidate(f"Co{i}") for i in range(3)]
+    out = score_mod.score_all(cands)
+
+    assert all(c.composite is None for c in out)
+    assert score_mod.failures.candidates == 3
+    assert "gateway 503" in score_mod.failures.reasons[0]
+
+
+def test_a_refusal_is_not_counted_as_a_stage_failure(monkeypatch):
+    """A refusal is about one company, not a broken stage."""
+    from signal_engine import llm, score as score_mod
+
+    score_mod.reset_failures()
+    monkeypatch.setattr(
+        score_mod, "structured_call",
+        lambda **kw: (_ for _ in ()).throw(llm.RefusalError("declined")),
+    )
+    score_mod.score_all([_scoring_candidate("Co")])
+    assert score_mod.failures.candidates == 0
+
+
+def _scoring_candidate(name: str):
+    from signal_engine.schemas import Candidate, FundingEvent
+
+    return Candidate(event=FundingEvent(
+        is_funding_announcement=True, company_name=name, company_domain=f"{name}.com",
+        round_stage="seed", investors=[], sector="ai", one_line_description="d",
+        source_url="https://n", extraction_confidence=0.9))

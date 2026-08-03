@@ -173,8 +173,18 @@ class TestDraft:
         assert "do NOT invent a job title" in rendered
         assert "Backend Engineer" not in rendered
 
-    def test_over_length_body_is_trimmed_to_the_ceiling(self, monkeypatch):
-        long_body = " ".join(f"w{i}" for i in range(150))
+    def test_over_length_body_keeps_its_ending(self, monkeypatch):
+        """An over-length draft must not be decapitated.
+
+        Trimming to the word ceiling cut from the end — which is exactly where
+        the call to action and the signature are — producing an email that
+        stopped mid-sentence and was signed by nobody. Every draft is reviewed
+        by a human before sending, so slightly long is strictly better.
+        """
+        long_body = (
+            " ".join(f"w{i}" for i in range(150))
+            + " Are you open to reviewing a shortlist? Ankur, Founder, Hire100x"
+        )
         monkeypatch.setattr(
             draft,
             "structured_call",
@@ -183,7 +193,11 @@ class TestDraft:
         result = draft.draft_one(self._candidate())
 
         assert result.outreach is not None
-        assert len(result.outreach.body.split()) <= draft.BODY_WORD_LIMIT + 1
+        assert result.outreach.body == long_body, "must not be truncated"
+        assert result.outreach.body.rstrip().endswith("Hire100x"), (
+            "the signature is the part truncation used to remove"
+        )
+        assert not result.outreach.body.endswith("\u2026")
 
     def test_body_within_the_ceiling_is_left_alone(self, monkeypatch):
         body = "Short and to the point."

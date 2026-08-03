@@ -48,6 +48,7 @@ def run(
     stats = RunStats(started_at=started, dry_run=dry_run)
     llm.reset_usage()
     extract.reset_failures()
+    score.reset_failures()
     enrich.reset()
 
     sheets_client = None
@@ -167,7 +168,17 @@ def run(
 
     # ── 7. Score ──────────────────────────────────────────────────────────────
     scored = score.score_all(candidates)
-    stats.scored = len(scored)
+    # Count only what was actually scored. A candidate whose scoring call died
+    # has no composite, which reads downstream as "below threshold" — the same
+    # as a company judged weak — so counting it as scored would report a
+    # collapsed stage as a quiet one.
+    stats.scored = len(scored) - score.failures.candidates
+    if score.failures.candidates:
+        stats.scoring_failed_candidates = score.failures.candidates
+        stats.errors.append(
+            f"scoring failed for {score.failures.candidates}/{len(scored)} "
+            f"candidates: {'; '.join(score.failures.reasons[:3])}"
+        )
     passing = [c for c in scored if score.above_threshold(c)]
 
     # ── 8. Draft (threshold-passers only) ─────────────────────────────────────

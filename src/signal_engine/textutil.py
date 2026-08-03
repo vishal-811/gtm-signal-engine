@@ -24,9 +24,18 @@ _COMPANY_SUFFIXES = {
     "technologies",
     "technology",
     "labs",
-    "ai",
-    "io",
 }
+
+# Deliberately NOT suffixes: "ai" and "io". They read like noise but are part of
+# the actual name for a whole generation of companies — Scale AI is not Scale,
+# and stripping them collapsed "Scale AI", "Scale Labs" and "Scale" onto one
+# key. That key feeds the 30-day suppression ledger, so the cost was a real new
+# company being silently held back because an unrelated one shared a stem.
+#
+# The reverse error — the same company appearing under two spellings — is now
+# caught downstream by collapse_duplicate_boards(), which matches on the
+# resolved ATS board. A visible duplicate is also cheaper than an invisible
+# suppression.
 
 # Tracking params that differ between feeds carrying the same story.
 _TRACKING_PARAM_PREFIXES = ("utm_", "ref", "fbclid", "gclid", "mc_cid", "mc_eid")

@@ -14,12 +14,42 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 
 from .config import Rubric, prompt, rubric as load_rubric, settings
 from .llm import RefusalError, structured_call
 from .schemas import Candidate, ScoreResult, clamp_score
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class Failures:
+    """Candidates that could not be scored during one run.
+
+    A failed scoring call leaves the candidate with no composite, which
+    `above_threshold` reads as "below the bar" — identical to a company that was
+    scored and judged weak. So an outage that killed every scoring call produced
+    an empty shortlist and a green run, which is what a genuinely quiet day
+    looks like. Extraction already counts its losses; this stage did not.
+    """
+
+    candidates: int = 0
+    reasons: list[str] = field(default_factory=list)
+
+    def record(self, reason: str) -> None:
+        self.candidates += 1
+        summary = reason.strip().splitlines()[0][:160]
+        if summary and summary not in self.reasons:
+            self.reasons.append(summary)
+
+
+failures = Failures()
+
+
+def reset_failures() -> None:
+    global failures
+    failures = Failures()
 
 
 def _workers() -> int:
@@ -190,10 +220,13 @@ def score_one(candidate: Candidate, rubric: Rubric | None = None) -> Candidate:
             label="score",
         )
     except RefusalError as exc:
+        # A refusal is about this one company, not a broken stage, so it is
+        # logged but not counted as a failure of the run.
         log.warning("scoring refused for %s: %s", candidate.event.company_name, exc)
         return candidate
     except Exception as exc:  # noqa: BLE001
         log.error("scoring failed for %s: %s", candidate.event.company_name, exc)
+        failures.record(str(exc))
         return candidate
 
     candidate.score = result
@@ -214,10 +247,17 @@ def score_all(candidates: list[Candidate]) -> list[Candidate]:
     passing = sum(1 for c in scored if above_threshold(c, rubric))
     log.info(
         "scored %d candidates, %d above threshold %.2f",
-        len(scored),
+        len(scored) - failures.candidates,
         passing,
         rubric.threshold,
     )
+    if failures.candidates:
+        log.warning(
+            "%d of %d candidates could not be scored: %s",
+            failures.candidates,
+            len(scored),
+            "; ".join(failures.reasons[:3]),
+        )
     return scored
 
 

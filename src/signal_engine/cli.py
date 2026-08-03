@@ -642,7 +642,24 @@ def cmd_run(args: argparse.Namespace) -> int:
             f"Treating this run as failed.[/red]"
         )
         return 1
+    if _scoring_collapsed(stats):
+        console.print(
+            f"[red]Scoring failed for {stats.scoring_failed_candidates} "
+            f"candidate(s) and none were scored. Treating this run as "
+            f"failed.[/red]"
+        )
+        return 1
     return 0
+
+
+def _scoring_collapsed(stats) -> bool:
+    """Did scoring fail outright rather than merely find nothing good?
+
+    Stricter than the extraction check: extraction losses are compared against
+    a share, but here any successful score means the stage was working and the
+    empty shortlist is a real verdict. Only a total wipeout is a failure.
+    """
+    return bool(stats.scoring_failed_candidates) and stats.scored == 0
 
 
 def _articles_attempted(stats, limit: int | None) -> int:

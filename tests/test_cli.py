@@ -321,3 +321,33 @@ class TestExtractionFailureExit:
         from signal_engine import cli
 
         assert cli._extraction_collapsed(self._stats(0, 0), None) is False
+
+
+class TestScoringFailureExit:
+    @staticmethod
+    def _stats(scored: int, failed: int):
+        from datetime import datetime, timezone
+
+        from signal_engine.schemas import RunStats
+
+        return RunStats(
+            started_at=datetime.now(timezone.utc), dry_run=True,
+            scored=scored, scoring_failed_candidates=failed,
+        )
+
+    def test_total_scoring_wipeout_fails_the_run(self):
+        from signal_engine import cli
+
+        assert cli._scoring_collapsed(self._stats(scored=0, failed=9)) is True
+
+    def test_nothing_good_today_is_not_a_failure(self):
+        """Scored fine, nothing cleared the bar — a real verdict, exit 0."""
+        from signal_engine import cli
+
+        assert cli._scoring_collapsed(self._stats(scored=9, failed=0)) is False
+
+    def test_partial_scoring_failure_is_not_a_wipeout(self):
+        """Any successful score proves the stage works."""
+        from signal_engine import cli
+
+        assert cli._scoring_collapsed(self._stats(scored=4, failed=5)) is False
