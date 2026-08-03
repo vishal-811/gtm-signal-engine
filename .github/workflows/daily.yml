@@ -36,7 +36,8 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          # Match the version this is developed and tested against.
+          python-version: "3.14"
           cache: pip
 
       - name: Install
@@ -45,28 +46,80 @@ jobs:
           pip install -r requirements.txt
           pip install -e .
 
-      - name: Run pipeline
-        id: pipeline
+      - name: Build .env from repository secrets and variables
+        # Written as a file rather than passed as `env:` entries. An unset
+        # `vars.X` expands to an empty string, which pydantic reads as a real
+        # value of "" and uses instead of the default in config.py — so the
+        # workflow needed a hardcoded fallback per setting, and every one of
+        # them had drifted from what the pipeline actually runs with. Skipping
+        # blank lines here means config.py owns the defaults, in one place.
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_BASE_URL: ${{ vars.OPENAI_BASE_URL }}
           OPENAI_USER_AGENT: ${{ vars.OPENAI_USER_AGENT }}
-          LLM_STRUCTURED_MODE: ${{ vars.LLM_STRUCTURED_MODE || 'auto' }}
-          LLM_MAX_CONCURRENCY: ${{ vars.LLM_MAX_CONCURRENCY || '4' }}
-          LLM_EXTRACT_BATCH_SIZE: ${{ vars.LLM_EXTRACT_BATCH_SIZE || '10' }}
-          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5' }}
-          OPENAI_INPUT_COST_PER_MTOK: ${{ vars.OPENAI_INPUT_COST_PER_MTOK || '0' }}
-          OPENAI_OUTPUT_COST_PER_MTOK: ${{ vars.OPENAI_OUTPUT_COST_PER_MTOK || '0' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          LLM_STRUCTURED_MODE: ${{ vars.LLM_STRUCTURED_MODE }}
+          LLM_MAX_CONCURRENCY: ${{ vars.LLM_MAX_CONCURRENCY }}
+          LLM_EXTRACT_BATCH_SIZE: ${{ vars.LLM_EXTRACT_BATCH_SIZE }}
+          LLM_REQUEST_TIMEOUT: ${{ vars.LLM_REQUEST_TIMEOUT }}
+          OPENAI_INPUT_COST_PER_MTOK: ${{ vars.OPENAI_INPUT_COST_PER_MTOK }}
+          OPENAI_OUTPUT_COST_PER_MTOK: ${{ vars.OPENAI_OUTPUT_COST_PER_MTOK }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          # Actions cannot mount a file, so the service-account JSON is passed
-          # inline. Settings.google_credentials_info() accepts either form.
           GOOGLE_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_JSON }}
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SENDER_NAME: ${{ secrets.SENDER_NAME }}
-          SENDER_TITLE: ${{ secrets.SENDER_TITLE }}
-          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
-          APOLLO_ENABLED: ${{ vars.APOLLO_ENABLED || 'false' }}
+          SENDER_NAME: ${{ vars.SENDER_NAME }}
+          SENDER_TITLE: ${{ vars.SENDER_TITLE }}
+          SENDER_EMAIL: ${{ vars.SENDER_EMAIL }}
+          SENDER_COMPANY: ${{ vars.SENDER_COMPANY }}
+          DEDUPE_WINDOW_DAYS: ${{ vars.DEDUPE_WINDOW_DAYS }}
+          MAX_ARTICLE_AGE_HOURS: ${{ vars.MAX_ARTICLE_AGE_HOURS }}
+          MAX_EVENT_AGE_DAYS: ${{ vars.MAX_EVENT_AGE_DAYS }}
+          APOLLO_ENABLED: ${{ vars.APOLLO_ENABLED }}
           APOLLO_API_KEY: ${{ secrets.APOLLO_API_KEY }}
+        run: |
+          python - <<'PY'
+          import os, pathlib
+
+          names = [
+              "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_USER_AGENT",
+              "OPENAI_MODEL", "LLM_STRUCTURED_MODE", "LLM_MAX_CONCURRENCY",
+              "LLM_EXTRACT_BATCH_SIZE", "LLM_REQUEST_TIMEOUT",
+              "OPENAI_INPUT_COST_PER_MTOK", "OPENAI_OUTPUT_COST_PER_MTOK",
+              "GOOGLE_SHEET_ID", "GOOGLE_SERVICE_ACCOUNT_JSON",
+              "SLACK_WEBHOOK_URL", "SENDER_NAME", "SENDER_TITLE",
+              "SENDER_EMAIL", "SENDER_COMPANY", "DEDUPE_WINDOW_DAYS",
+              "MAX_ARTICLE_AGE_HOURS", "MAX_EVENT_AGE_DAYS",
+              "APOLLO_ENABLED", "APOLLO_API_KEY",
+          ]
+          lines, present = [], []
+          for name in names:
+              value = os.environ.get(name, "").strip()
+              if not value:
+                  continue
+              # The service-account JSON is multi-line; keep it on one line so
+              # the file stays a valid .env.
+              lines.append(f"{name}={value.replace(chr(10), '')}")
+              present.append(name)
+          pathlib.Path(".env").write_text("\n".join(lines) + "\n")
+          print(f"wrote .env with {len(present)} setting(s):")
+          for name in present:
+              print(f"  - {name}")
+          missing = [n for n in ("OPENAI_API_KEY", "GOOGLE_SHEET_ID",
+                                 "GOOGLE_SERVICE_ACCOUNT_JSON") if n not in present]
+          if missing:
+              raise SystemExit(
+                  "Missing required secret(s): " + ", ".join(missing)
+                  + "\nSet them under Settings -> Secrets and variables -> Actions."
+              )
+          PY
+
+      - name: Show effective configuration
+        # Prints resolved settings with secrets redacted, so a failed run can
+        # be diagnosed from the log without re-running it.
+        run: signal-engine show-config || true
+
+      - name: Run pipeline
+        id: pipeline
         run: |
           set -o pipefail
           ARGS=""
@@ -80,6 +133,10 @@ jobs:
           fi
           echo "Running: signal-engine run $ARGS"
           signal-engine run $ARGS 2>&1 | tee run.log
+
+      - name: Remove credentials
+        if: always()
+        run: rm -f .env
 
       - name: Notify Slack on failure
         # The pipeline posts its own alert when it fails internally. This
