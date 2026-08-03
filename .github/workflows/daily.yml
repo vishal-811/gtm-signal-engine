@@ -2,10 +2,9 @@ name: Daily signal run
 
 on:
   schedule:
-    # 02:30 UTC = 08:00 IST, so the shortlist is waiting when the day starts.
-    # GitHub's scheduler can lag by several minutes under load; that is fine
-    # for a daily digest. Change this one line to re-time the run.
-    - cron: "30 2 * * *"
+    # TEMPORARY — one-off slot to prove the scheduler fires in production.
+    # Revert to "30 2 * * *" (02:30 UTC = 08:00 IST) once verified.
+    - cron: "36 0 * * *"
 
   # Manual trigger, defaulting to a dry run so an accidental click never posts.
   workflow_dispatch:

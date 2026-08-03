@@ -13,6 +13,9 @@ import yaml
 from signal_engine import cli
 from signal_engine.config import PROJECT_ROOT
 
+# The schedule the daily run must return to: 02:30 UTC = 08:00 IST.
+PRODUCTION_CRON = "30 2 * * *"
+
 
 @pytest.fixture
 def blank_settings(monkeypatch):
@@ -163,7 +166,39 @@ class TestWorkflows:
 
         assert "schedule" in triggers
         assert "workflow_dispatch" in triggers
-        assert triggers["schedule"][0]["cron"] == "30 2 * * *"
+
+        cron = triggers["schedule"][0]["cron"]
+        fields = cron.split()
+        assert len(fields) == 5, f"not a valid cron expression: {cron!r}"
+        minute, hour = fields[0], fields[1]
+        assert minute.isdigit() and hour.isdigit(), (
+            f"the daily run must fire at a fixed time, got {cron!r}"
+        )
+
+        raw = path.read_text()
+        if cron != PRODUCTION_CRON:
+            # A temporary slot is legitimate — proving the scheduler fires
+            # means moving it — but it must be marked, and the real schedule
+            # must still be written down, or a debugging change becomes the
+            # permanent one by forgetting.
+            assert "TEMPORARY" in raw, (
+                f"cron is {cron!r}, not the production {PRODUCTION_CRON!r}, and "
+                "nothing marks it as a deliberate temporary override"
+            )
+            assert PRODUCTION_CRON in raw, (
+                "a temporary cron must record the schedule to restore"
+            )
+
+    def test_no_temporary_cron_is_left_behind(self):
+        """Fails while a one-off test slot is in place. That is the point:
+        it is the reminder to put 08:00 IST back."""
+        raw = (PROJECT_ROOT / ".github" / "workflows" / "daily.yml").read_text()
+        import yaml as _yaml
+
+        cron = _yaml.safe_load(raw)[True]["schedule"][0]["cron"]
+        if "TEMPORARY" in raw:
+            pytest.skip(f"temporary cron {cron!r} in place for a scheduler test")
+        assert cron == PRODUCTION_CRON
 
     def test_daily_workflow_reaches_every_setting_the_pipeline_reads(self):
         """Any setting configurable in .env must be reachable in CI.
