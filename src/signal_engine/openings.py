@@ -341,11 +341,31 @@ def discover_by_slug(company_name: str, domain: str | None) -> tuple[AtsProvider
             continue
         for provider, fetch in PROVIDERS.items():
             postings = fetch(token)
-            # An empty list means the board exists but has no roles — a real
-            # and meaningful answer. None means no such board.
-            if postings is not None:
-                log.debug("slug guess hit: %s/%s", provider, token)
-                return provider, token
+            if not postings:
+                # Deliberately stricter than `is not None`. Greenhouse, Lever
+                # and Ashby 404 an unknown board, so an empty list from them
+                # genuinely means "real board, no roles open". SmartRecruiters
+                # answers 200 with an empty list for *any* string — verified
+                # against `definitelynotarealcompany7391` — so accepting empty
+                # here handed every company a SmartRecruiters board it did not
+                # have.
+                #
+                # The consequences were quiet and expensive: those companies
+                # were recorded as having a board with zero engineering roles
+                # rather than no board at all, which scores zero on hiring
+                # intent instead of being flagged unverified; they carried no
+                # job locations, so geography could not place them; and the
+                # false token was written to the ATS cache. It also aborted the
+                # search — a company whose domain label misses but whose name
+                # slug would hit on Greenhouse never got that far, because
+                # SmartRecruiters had already claimed the first candidate.
+                #
+                # A guess needs corroboration. One real posting is that
+                # corroboration. Boards found on the company's own careers page
+                # are exempt: that token came from the company, not from us.
+                continue
+            log.debug("slug guess hit: %s/%s (%d posting(s))", provider, token, len(postings))
+            return provider, token
     return None
 
 

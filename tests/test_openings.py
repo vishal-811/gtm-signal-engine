@@ -414,3 +414,55 @@ class TestSmartRecruiters:
     def test_is_registered_as_a_provider(self):
         assert "smartrecruiters" in openings.PROVIDERS
         assert "smartrecruiters" in openings.BOARD_URLS
+
+
+class TestSlugGuessCorroboration:
+    """A guessed slug must be backed by a real posting.
+
+    SmartRecruiters answers HTTP 200 with an empty list for any string at all
+    — `definitelynotarealcompany7391` included — while Greenhouse, Lever and
+    Ashby 404. Accepting an empty response from a *guess* therefore handed
+    every company a SmartRecruiters board it did not have.
+    """
+
+    def test_empty_guess_is_rejected_and_the_search_continues(self, monkeypatch):
+        calls: list[tuple[str, str]] = []
+
+        def sr(token):
+            calls.append(("smartrecruiters", token))
+            return []           # 200-with-nothing, for literally any token
+
+        def gh(token):
+            calls.append(("greenhouse", token))
+            return [openings.JobPosting(title="Backend Engineer", location="Pune")] \
+                if token == "apnamart-tech" else None
+
+        monkeypatch.setattr(
+            openings, "PROVIDERS",
+            {"smartrecruiters": sr, "greenhouse": gh},
+        )
+        found = openings.discover_by_slug("Apna Mart Tech", "apnamart-tech.in")
+
+        assert found == ("greenhouse", "apnamart-tech"), (
+            "an empty SmartRecruiters response must not end the search"
+        )
+
+    def test_a_guess_with_real_postings_is_accepted(self, monkeypatch):
+        monkeypatch.setattr(
+            openings, "PROVIDERS",
+            {"smartrecruiters": lambda t: [
+                openings.JobPosting(title="Platform Engineer", location="Bengaluru")
+            ]},
+        )
+        assert openings.discover_by_slug("Acme", "acme.com") == (
+            "smartrecruiters", "acme",
+        )
+
+    def test_no_board_anywhere_returns_none_not_a_phantom(self, monkeypatch):
+        """Returning a phantom board scores the company 0 on hiring intent;
+        returning None marks it unverified, which is the honest answer."""
+        monkeypatch.setattr(
+            openings, "PROVIDERS",
+            {"smartrecruiters": lambda t: [], "greenhouse": lambda t: None},
+        )
+        assert openings.discover_by_slug("Sid's Farm", "sidsfarm.com") is None
