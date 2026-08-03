@@ -150,6 +150,19 @@ def is_engineering_title(title: str) -> bool:
     headcount.
     """
     _ensure_title_patterns()
+    # A slash lists alternatives, not one compound role. "Research Engineer /
+    # Research Scientist" is one posting a backend IC can fill, but the whole
+    # string trips the `scientist` exclusion and was rejected — eight such
+    # titles across seven boards audited, and the only genuine miss among
+    # seventy role-noun rejections. Judging each alternative separately keeps
+    # "Sales / Solutions Engineer" excluded, because neither half qualifies.
+    parts = [p for p in re.split(r"\s*/\s*", title) if p.strip()]
+    if len(parts) > 1 and any(_is_engineering_phrase(p) for p in parts):
+        return True
+    return _is_engineering_phrase(title)
+
+
+def _is_engineering_phrase(title: str) -> bool:
     normalized = normalize_title_text(title)
     if any(p.search(normalized) for p in _exclude_patterns):
         return False

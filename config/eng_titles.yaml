@@ -72,6 +72,40 @@ exclude:
   - developer evangelist
   - devrel
 
+  # ── Silicon and hardware design ───────────────────────────────────────────
+  # Chip companies post large numbers of these and they all contain "engineer".
+  # Etched's board alone had 56 titles matching, roughly half of them silicon:
+  # RTL Design, Physical Design, PCB Layout, DFT, Design Verification. They are
+  # real engineering, but not roles this network places, and counting them
+  # inflated hiring intent on a company whose software team is far smaller than
+  # the number suggested.
+  #
+  # Deliberately narrow. "Validation Engineer" and "Verification Engineer" on
+  # their own are excluded only in their silicon-specific forms, because both
+  # are also legitimate software titles.
+  - rtl
+  - rtl design
+  - physical design
+  - design verification
+  - pcb
+  - pcb layout
+  - dft
+  - design for test
+  - asic
+  - fpga
+  - silicon
+  - analog
+  - mixed signal
+  - signal integrity
+  - layout engineer
+  - packaging engineer
+  - thermal engineer
+  - semiconductor
+  - lithography
+  - foundry
+  - tapeout
+  - verification engineer - internal ip
+
   # ── Non-software engineering ──────────────────────────────────────────────
   - mechanical engineer
   - electrical engineer

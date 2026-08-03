@@ -2,103 +2,135 @@
 # HIRE100X FIT RUBRIC  —  this file is yours to edit
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# This is the draft I proposed. Review and change it before we build the scoring
-# stage. Everything here is data, not code: change a weight, reword a question,
-# move the threshold, add or delete a criterion — no Python edits needed.
+# Everything here is data, not code: change a weight, reword a question, move
+# the threshold, add or delete a criterion — no Python edits needed.
 #
 # How scoring works:
-#   1. Claude scores each criterion 0-5 and writes one sentence of justification.
+#   1. The model scores each criterion 0-5 and writes one sentence of reasoning.
 #   2. Python computes  composite = sum(score * weight)  — deterministic and
 #      unit-tested, so the arithmetic is never hallucinated.
-#   3. Companies with composite > threshold get an outreach draft and get posted.
+#   3. Companies above `threshold` get an outreach draft and reach the sheet.
 #
 # Rules:
 #   - `weight` values MUST sum to exactly 1.0 (startup fails loudly otherwise).
-#   - `id` values must be unique and are what Claude echoes back.
-#   - `anchors` are few-shot calibration points. They matter a lot: vague
-#     anchors give noisy scores. Anchor 5, 3, and 0 at minimum.
+#   - `id` values must be unique and are what the model echoes back.
+#   - `anchors` are calibration points and they matter a lot. Vague anchors give
+#     noisy scores. Anchor 5, 3 and 0 at minimum.
 #
 # Tune with:  signal-engine score-one <article-url>
+#
+# ── What changed, and why ─────────────────────────────────────────────────────
+#
+# The first version was written before any real data existed. Rebalanced after
+# a full run, around one principle: score what we can verify about whether this
+# company needs engineers, and stop scoring things the pipeline already
+# guarantees.
+#
+# * A single confirmed engineering opening is now a real score, not a rounding
+#   error. A funded company with one open backend role is a live opportunity —
+#   the round is the leading indicator, the opening confirms they are actually
+#   hiring. Previously 1 role fell between the "2-4 roles" and "zero roles"
+#   anchors with nothing to guide the model, so it landed near zero.
+#
+# * urgency was removed. Articles are read within 120 hours and rounds are
+#   dropped past 14 days, so nearly every survivor scored 4 or 5 — a criterion
+#   with no variance is noise, not signal, and it was crowding out 10% of the
+#   weight. The information is not lost: `Funded On` is a column in the sheet,
+#   so sort by it.
+#
+# * stage_and_size was cut from 20% to 13%. It is a proxy for "can they afford
+#   to hire", and the funding round already answers that directly.
+#
+# * role_stack_match rose from 15% to 22%. Whether the open roles are ones this
+#   network can actually fill is the second-best predictor after whether they
+#   are hiring at all, and it was underweighted.
+#
+# * geo_match keeps its weight but the anchors are flatter. Coverage is nine
+#   markets across three tiers now, not three cities, so geography discriminates
+#   far less than it used to and should not tank an otherwise strong lead.
 
-threshold: 3.2   # out of 5.0. Raise for a tighter list, lower for more volume.
+threshold: 2.9   # out of 5.0. Raise for a tighter list, lower for more volume.
 
 criteria:
   - id: hiring_intent
-    weight: 0.30
+    weight: 0.35
     question: >
-      How strongly is this company hiring engineers right now? Weigh the number
-      of open engineering roles, how recently they were posted, and any explicit
-      hiring language in the funding coverage. Verified job-board data should
-      dominate this score; treat press-release claims about "growing the team"
-      as weak evidence on their own.
+      Is this company hiring engineers right now? Verified job-board data
+      dominates: a confirmed engineering opening outweighs any amount of
+      press-release language about "growing the team". Treat a single verified
+      opening as a genuine buying signal, not a weak one — a freshly funded
+      company with one open engineering role is actively hiring and will open
+      more. Weigh how many roles are open and how recently they were posted.
     anchors:
-      "5": "8+ open engineering roles, several posted within the last 14 days"
-      "4": "5-7 open engineering roles on a live board"
-      "3": "2-4 open engineering roles, OR no board found but coverage explicitly states they are scaling engineering"
+      "5": "8 or more open engineering roles, several posted within the last 14 days"
+      "4": "4-7 open engineering roles on a live board"
+      "3": "1-3 verified engineering roles — one confirmed opening still counts"
+      "2": "No board found, but the coverage explicitly says they are scaling engineering"
       "1": "No board found and no hiring signal beyond the round itself"
-      "0": "Live board found with zero engineering roles on it"
+      "0": "A live board was found and it has zero engineering roles"
 
-  - id: stage_and_size
-    weight: 0.20
+  - id: role_stack_match
+    weight: 0.22
     question: >
-      Is the round stage and size in the band where a company urgently needs
-      outside sourcing help and has the budget to pay for it? Too small means no
-      hiring budget; too large usually means a mature in-house talent function
-      that does not buy from agencies.
+      Are the open roles ones Hire100x's network can fill — individual
+      contributors who ship production software? Backend, full-stack, frontend,
+      mobile, AI/ML, data, platform, infrastructure, DevOps/SRE, security
+      engineering and QA/SDET all count.
+
+      Score the roles that are actually open, not the industry the company is
+      in. A chip company whose open roles are compiler, kernel and inference
+      software is a strong match; score it on that, not on the fact that it
+      makes hardware. Only score low on this when the open roles themselves are
+      ones an IC software engineer could not fill. If no roles are verified,
+      score on what this kind of company would typically hire.
     anchors:
-      "5": "Seed through Series B, $5M-$50M raised"
-      "4": "Series B-C, $50M-$80M raised"
-      "3": "Pre-seed or small seed, $2M-$5M raised"
-      "1": "Series D+ with an established internal recruiting team"
-      "0": "Under $1M raised, or amount undisclosed with no other budget signal"
+      "5": "Mostly backend, full-stack, AI/ML, data, platform or infrastructure IC roles"
+      "4": "Mostly IC software roles of some kind — includes frontend, mobile, DevOps/SRE, security, QA/SDET"
+      "3": "A mix: some IC software roles alongside non-engineering ones"
+      "2": "No roles verified, but the company builds software and would hire engineers"
+      "1": "Mostly engineering leadership, research science, or analytics rather than IC engineers"
+      "0": "Hardware, embedded-only, or entirely non-technical roles"
+
+  - id: sector_fit
+    weight: 0.15
+    question: >
+      Does this company build software in a domain where Hire100x's engineers
+      already ship? Judge the engineering organisation, not the market
+      category — a logistics company running a real platform team is a better
+      fit than a thin SaaS wrapper.
+    anchors:
+      "5": "AI/ML, developer tools, fintech, B2B SaaS, data infrastructure, cybersecurity, or cloud/platform"
+      "4": "Software-first in another domain — healthtech, marketplace, e-commerce, logistics, climate, edtech, gaming, proptech"
+      "3": "Consumer or services business with a substantial in-house product engineering team, or deep tech — semiconductors, robotics, space, biotech — with a real software organisation alongside"
+      "1": "Software-adjacent with a thin engineering org, or engineering is outsourced"
+      "0": "Not a software company"
 
   - id: geo_match
     weight: 0.15
     question: >
-      How well does where this company hires match where Hire100x's network of
-      engineers actually is? The pipeline reports a CONFIRMED market, usually
-      established from the locations on their live job board — trust it, and do
-      not mark a company down merely because the article never stated an HQ.
-      Score the market itself, not the certainty.
+      Where does this company hire, against where Hire100x's engineers are? The
+      pipeline reports a CONFIRMED market, usually established from the
+      locations on their live job board — trust it, and do not mark a company
+      down merely because the article never stated a headquarters. Score the
+      market itself, not the certainty. Remote-friendly roles in any covered
+      market count fully.
     anchors:
       "5": "sf-bay-area, nyc-metro, or bengaluru — a Hire100x network hub"
-      "4": "Elsewhere in the US or India (us-other, india-other), where the network already operates"
-      "3": "uk or canada — English-speaking, commonly hires remote US talent"
-      "2": "europe or apac — other regions that hire remote India engineers"
+      "4": "us-other, india-other, uk or canada — the countries the network already covers, plus the English-speaking markets that routinely hire remote US and India engineers"
+      "3": "europe or apac — covered markets that hire remote engineers"
       "0": "No market could be confirmed at all"
 
-  - id: role_stack_match
-    weight: 0.15
+  - id: stage_and_size
+    weight: 0.13
     question: >
-      Do the open engineering roles match the kind of engineer Hire100x's
-      network supplies — backend, full-stack, AI/ML, devtools, and
-      infrastructure ICs shipping production code?
+      Is the round stage and size in the band where a company needs outside
+      sourcing help and has budget for it? Weighted lightly on purpose: the
+      round itself already proves they have money to spend, so this only
+      separates the band that buys from agencies from the band that does not.
     anchors:
-      "5": "Most open roles are backend, full-stack, AI/ML, or infrastructure IC roles"
-      "3": "A mix; some roles match, some do not"
-      "1": "Mostly senior leadership, data science research, or QA-only roles"
-      "0": "Roles are hardware, embedded-only, or entirely non-technical"
-
-  - id: sector_fit
-    weight: 0.10
-    question: >
-      Is the company in a sector where Hire100x's engineers already ship — AI
-      labs, developer tools, fintech, or B2B SaaS?
-    anchors:
-      "5": "AI lab, developer tools, fintech, or B2B SaaS"
-      "3": "Adjacent and engineering-heavy — marketplace, consumer tech, health tech with a real product org"
-      "1": "Software-adjacent but with a thin engineering org"
-      "0": "Not a software company"
-
-  - id: urgency
-    weight: 0.10
-    question: >
-      How time-sensitive is outreach? A company is most reachable in the window
-      right after a round closes, before they have committed to a recruiting
-      vendor or filled the roles.
-    anchors:
-      "5": "Announced within the last 7 days AND coverage signals aggressive near-term hiring"
-      "4": "Announced within the last 7 days"
-      "3": "Announced 7-14 days ago"
-      "1": "Announced 14-30 days ago"
-      "0": "Announced more than 30 days ago"
+      "5": "Seed through Series B, roughly $5M-$50M raised"
+      "4": "Series B-C, roughly $50M-$80M raised, or a strong pre-seed of $3M-$5M"
+      "3": "Pre-seed or small seed, roughly $1M-$5M"
+      "2": "Amount undisclosed, but the stage implies a real hiring budget"
+      "1": "Series D or later with an established internal recruiting function"
+      "0": "Under $1M raised, or no budget signal of any kind"

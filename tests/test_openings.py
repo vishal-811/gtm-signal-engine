@@ -466,3 +466,54 @@ class TestSlugGuessCorroboration:
             {"smartrecruiters": lambda t: [], "greenhouse": lambda t: None},
         )
         assert openings.discover_by_slug("Sid's Farm", "sidsfarm.com") is None
+
+
+class TestSlashTitles:
+    """A slash lists alternatives, not one compound role."""
+
+    def test_dual_engineer_scientist_title_counts(self):
+        # The only genuine false negative in an audit of 796 live titles:
+        # `scientist` vetoed a posting a backend IC can fill.
+        assert openings.is_engineering_title(
+            "Research Engineer / Research Scientist, Tokens"
+        )
+
+    def test_ai_ml_engineer_still_counts(self):
+        assert openings.is_engineering_title("AI/ML Engineer")
+
+    def test_slash_does_not_smuggle_in_excluded_roles(self):
+        # Neither half qualifies, so neither does the whole.
+        assert not openings.is_engineering_title("Sales / Solutions Engineer")
+        assert not openings.is_engineering_title("Engineering Manager / Director")
+
+    def test_plain_scientist_titles_are_still_excluded(self):
+        assert not openings.is_engineering_title("Data Scientist, Marketing")
+        assert not openings.is_engineering_title("Research Scientist")
+
+
+class TestSiliconRolesAreNotPlaceable:
+    """Chip-design titles all contain "engineer" but are not roles this
+    network fills. Etched's board had 56 matches, about half of them silicon,
+    which inflated hiring intent well beyond its actual software team."""
+
+    def test_silicon_design_titles_are_excluded(self):
+        for title in (
+            "RTL Design Engineer",
+            "Physical Design Engineer",
+            "PCB Layout Engineer",
+            "DFT (Design For Test) Engineer",
+            "ASIC Architect",
+            "Analog Design Engineer",
+            "FPGA Engineer",
+        ):
+            assert not openings.is_engineering_title(title), title
+
+    def test_software_roles_at_a_chip_company_still_count(self):
+        for title in (
+            "Kernel Driver Software Engineer",
+            "Inference Software Engineer",
+            "Infrastructure Software Engineer",
+            "Developer Experience Engineer",
+            "Software Engineer – Performance Profiling",
+        ):
+            assert openings.is_engineering_title(title), title
