@@ -2,9 +2,11 @@ name: Daily signal run
 
 on:
   schedule:
-    # TEMPORARY — one-off slot to prove the scheduler fires in production.
-    # Revert to "30 2 * * *" (02:30 UTC = 08:00 IST) once verified.
-    - cron: "12 1 * * *"
+    # 02:30 UTC = 08:00 IST, so the shortlist is waiting when the day starts.
+    # GitHub gives schedules no SLA and deprioritises low-activity repos —
+    # two same-day test slots never fired at all — so treat the time as
+    # "some point after", not a guarantee.
+    - cron: "30 2 * * *"
 
   # Manual trigger, defaulting to a dry run so an accidental click never posts.
   workflow_dispatch:
