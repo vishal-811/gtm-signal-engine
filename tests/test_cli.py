@@ -223,3 +223,66 @@ class TestWorkflows:
             (PROJECT_ROOT / ".github" / "workflows" / "daily.yml").read_text()
         )
         assert workflow["concurrency"]["group"]
+
+
+class TestExtractionFailureExit:
+    """The exit code is the only signal a scheduler sees.
+
+    These are direct tests of the decision, because the bug that motivated
+    them — a bare `limit` where `args.limit` was meant — lived on a line no
+    test executed. It raised NameError *after* the whole pipeline had run and
+    printed its report, so it looked like a working run that crashed at the end.
+    """
+
+    @staticmethod
+    def _stats(attempted_after_dedupe: int, failed: int):
+        from datetime import datetime, timezone
+
+        from signal_engine.schemas import RunStats
+
+        return RunStats(
+            started_at=datetime.now(timezone.utc),
+            dry_run=True,
+            articles_after_dedupe=attempted_after_dedupe,
+            extraction_failed_articles=failed,
+        )
+
+    def test_total_failure_is_a_failed_run(self):
+        from signal_engine import cli
+
+        assert cli._extraction_collapsed(self._stats(20, 20), None) is True
+
+    def test_a_quiet_day_is_not_a_failed_run(self):
+        from signal_engine import cli
+
+        assert cli._extraction_collapsed(self._stats(20, 0), None) is False
+
+    def test_a_few_lost_articles_do_not_fail_the_run(self):
+        from signal_engine import cli
+
+        assert cli._extraction_collapsed(self._stats(100, 5), None) is False
+
+    def test_majority_failure_fails_even_when_some_succeed(self):
+        """A partial outage still means the shortlist cannot be trusted."""
+        from signal_engine import cli
+
+        assert cli._extraction_collapsed(self._stats(100, 60), None) is True
+
+    def test_limit_is_the_denominator_not_the_deduped_total(self):
+        """With --limit 20 of 400 deduped, losing all 20 is total failure.
+
+        Measured against 400 it would read as 5% and pass silently — which is
+        exactly the shape of the run that first went green while doing nothing.
+        """
+        from signal_engine import cli
+
+        stats = self._stats(400, 20)
+        assert cli._articles_attempted(stats, 20) == 20
+        assert cli._extraction_collapsed(stats, 20) is True
+        assert cli._extraction_collapsed(stats, None) is False
+
+    def test_no_articles_at_all_is_not_a_failure(self):
+        """Feeds returning nothing is a feed problem, reported separately."""
+        from signal_engine import cli
+
+        assert cli._extraction_collapsed(self._stats(0, 0), None) is False

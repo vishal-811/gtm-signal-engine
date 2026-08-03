@@ -635,19 +635,37 @@ def cmd_run(args: argparse.Namespace) -> int:
     # scheduler must be able to tell the difference. The first production run
     # lost every article to a gateway error and still exited 0 — a green cron
     # would have gone on reporting success indefinitely.
-    attempted = stats.articles_after_dedupe if not limit else min(
-        limit, stats.articles_after_dedupe
-    )
-    if stats.extraction_failed_articles and attempted:
-        lost_share = stats.extraction_failed_articles / attempted
-        if lost_share >= _EXTRACTION_FAILURE_THRESHOLD:
-            console.print(
-                f"[red]Extraction failed for "
-                f"{stats.extraction_failed_articles}/{attempted} articles "
-                f"({lost_share:.0%}). Treating this run as failed.[/red]"
-            )
-            return 1
+    if _extraction_collapsed(stats, args.limit):
+        console.print(
+            f"[red]Extraction failed for {stats.extraction_failed_articles} of "
+            f"{_articles_attempted(stats, args.limit)} articles. "
+            f"Treating this run as failed.[/red]"
+        )
+        return 1
     return 0
+
+
+def _articles_attempted(stats, limit: int | None) -> int:
+    """How many articles extraction was actually asked to handle.
+
+    ``--limit`` truncates after dedupe, so comparing failures against the
+    full deduped count would understate the failure rate on a limited run.
+    """
+    total = stats.articles_after_dedupe
+    return min(limit, total) if limit else total
+
+
+def _extraction_collapsed(stats, limit: int | None) -> bool:
+    """Did enough of extraction fail that the run should be called broken?
+
+    A run that extracted nothing because the endpoint refused every request
+    looks exactly like a quiet news day — same empty shortlist, same exit 0.
+    The scheduler has to be able to tell them apart.
+    """
+    attempted = _articles_attempted(stats, limit)
+    if not attempted or not stats.extraction_failed_articles:
+        return False
+    return stats.extraction_failed_articles / attempted >= _EXTRACTION_FAILURE_THRESHOLD
 
 
 # ── entry point ───────────────────────────────────────────────────────────────
