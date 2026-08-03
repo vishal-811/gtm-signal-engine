@@ -91,7 +91,17 @@ class Settings(BaseSettings):
 
     dedupe_window_days: int = 30
     max_event_age_days: int = 14
-    max_article_age_hours: int = 36
+    # How far back to read the feeds. This is *not* how fresh a funding round
+    # must be — max_event_age_days governs that, and the urgency criterion
+    # penalises old rounds — so widening this admits more coverage without
+    # admitting stale deals.
+    #
+    # It was 36h, which quietly acted as a geography filter. US outlets publish
+    # enough volume that 36h catches plenty; Indian outlets do not, so almost
+    # every Indian round aged out before it was ever read. Measured on one
+    # Monday: 36h surfaced 5 Indian rounds, 120h surfaced 19, for 29 extraction
+    # batches instead of 10. Beyond 120h the curve flattens.
+    max_article_age_hours: int = 120
 
     def google_credentials_info(self) -> dict[str, Any] | None:
         """Return service-account credentials as a dict, from either source.

@@ -376,3 +376,21 @@ def test_collapse_preserves_input_order():
     ]
     kept, _ = filters.collapse_duplicate_boards(cands)
     assert [c.event.company_name for c in kept] == ["Zed", "Alpha"]
+
+
+def test_article_window_is_wider_than_it_is_strict_about_round_age():
+    """The feed window must not double as a freshness filter on the round.
+
+    At 36h this silently excluded India: US outlets publish enough volume that
+    36h catches plenty, Indian outlets do not, so their rounds aged out before
+    ever being read. Staleness is max_event_age_days' job, and the urgency
+    criterion's — not the reader's.
+    """
+    from signal_engine.config import Settings
+
+    s = Settings(openai_api_key="x")
+    assert s.max_article_age_hours >= 96, (
+        "too narrow a window drops low-volume regions before extraction"
+    )
+    # Reading further back than we would ever accept a round is pure waste.
+    assert s.max_article_age_hours <= s.max_event_age_days * 24
