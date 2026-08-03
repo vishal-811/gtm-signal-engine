@@ -47,6 +47,7 @@ def run(
     run_date = started.date()
     stats = RunStats(started_at=started, dry_run=dry_run)
     llm.reset_usage()
+    extract.reset_failures()
     enrich.reset()
 
     sheets_client = None
@@ -84,6 +85,18 @@ def run(
     # ── 2. Extract ────────────────────────────────────────────────────────────
     events = extract.extract(articles)
     stats.events_extracted = len(events)
+
+    # A lost article is not a quiet news day. Without this the two are
+    # indistinguishable: a run where the endpoint rejected everything finished
+    # green with an empty shortlist, and the nightly cron would have kept
+    # reporting success indefinitely.
+    lost = extract.failures
+    if lost.articles:
+        stats.errors.append(
+            f"extraction lost {lost.articles}/{len(articles)} articles across "
+            f"{lost.batches} batch(es): {'; '.join(lost.reasons[:3])}"
+        )
+        stats.extraction_failed_articles = lost.articles
 
     # ── 3. Filter ─────────────────────────────────────────────────────────────
     candidates, report = filters.apply(events, seen_keys=seen_keys)

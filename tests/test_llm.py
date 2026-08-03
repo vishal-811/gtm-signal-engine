@@ -228,3 +228,23 @@ def test_prompt_mode_retry_recovers_from_unparseable_first_reply(monkeypatch):
     assert len(sent) == 2, "should have retried exactly once"
     # The parse error must reach the model, or the retry is just a blind redo.
     assert "could not be parsed as JSON" in sent[1]["messages"][-1]["content"]
+
+
+def test_non_completion_body_raises_a_diagnosable_error():
+    """The SDK hands a bare-string body straight through pydantic's lenient
+    construct_type, so the first symptom was 'str' object has no attribute
+    'usage' — which names the SDK, not the gateway that misbehaved."""
+    import pytest
+
+    with pytest.raises(llm.UpstreamPayloadError) as exc:
+        llm._require_completion("unauthorized client detected", "extract")
+
+    message = str(exc.value)
+    assert "not a chat completion" in message
+    assert "unauthorized client detected" in message, "must quote the real body"
+    assert "extract" in message, "must name the stage"
+
+
+def test_require_completion_passes_a_real_response_through():
+    ok = SimpleNamespace(choices=[1], usage=None)
+    assert llm._require_completion(ok, "extract") is ok

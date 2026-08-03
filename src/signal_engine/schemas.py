@@ -237,6 +237,7 @@ class Candidate(BaseModel):
 
 class RunStats(BaseModel):
     """One row of the `runs` sheet tab — the pipeline's health dashboard."""
+    extraction_failed_articles: int = 0
 
     started_at: datetime
     finished_at: datetime | None = None

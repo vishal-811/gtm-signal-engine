@@ -25,6 +25,11 @@ from .schemas import Article, Candidate
 
 console = Console()
 
+# Share of articles that may be lost to endpoint errors before a run counts as
+# failed rather than merely quiet. Set below 1.0 so a partial outage — where
+# most batches fail but a few slip through — still turns the cron red.
+_EXTRACTION_FAILURE_THRESHOLD = 0.5
+
 
 def _setup_logging(verbose: bool) -> None:
     logging.basicConfig(
@@ -625,6 +630,23 @@ def cmd_run(args: argparse.Namespace) -> int:
             "Sheet.[/dim]"
         )
     console.print()
+
+    # A run that could not extract anything is broken, not quiet, and the
+    # scheduler must be able to tell the difference. The first production run
+    # lost every article to a gateway error and still exited 0 — a green cron
+    # would have gone on reporting success indefinitely.
+    attempted = stats.articles_after_dedupe if not limit else min(
+        limit, stats.articles_after_dedupe
+    )
+    if stats.extraction_failed_articles and attempted:
+        lost_share = stats.extraction_failed_articles / attempted
+        if lost_share >= _EXTRACTION_FAILURE_THRESHOLD:
+            console.print(
+                f"[red]Extraction failed for "
+                f"{stats.extraction_failed_articles}/{attempted} articles "
+                f"({lost_share:.0%}). Treating this run as failed.[/red]"
+            )
+            return 1
     return 0
 
 

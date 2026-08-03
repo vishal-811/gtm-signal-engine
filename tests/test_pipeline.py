@@ -18,6 +18,7 @@ import pytest
 
 from signal_engine import llm, pipeline
 from signal_engine.filters import FilterReport
+from signal_engine.schemas import Article
 from signal_engine.schemas import RunStats
 
 
@@ -91,3 +92,42 @@ class TestFinish:
             assert result.stats.cache_read_tokens == 89
         finally:
             llm.reset_usage()
+
+
+def test_extraction_failures_are_counted_not_swallowed(monkeypatch):
+    """A failed batch returns [], which downstream cannot tell from 'no news'.
+
+    Regression: a production run lost every article to a gateway error,
+    extracted nothing, and exited 0. The cron went green.
+    """
+    from signal_engine import extract as extract_mod
+
+    extract_mod.reset_failures()
+
+    def boom(_articles):
+        raise RuntimeError("upstream returned HTTP 200 but the body is not a chat completion")
+
+    monkeypatch.setattr(extract_mod, "_extract_once", boom)
+    arts = [
+        Article(title=f"t{i}", url=f"https://n/{i}", source="s", summary="x")
+        for i in range(8)
+    ]
+    events = extract_mod.extract(arts, batch_size=4)
+
+    assert events == []
+    assert extract_mod.failures.articles == 8, "every lost article must be counted"
+    assert extract_mod.failures.batches == 2
+    assert extract_mod.failures.reasons, "the reason must be kept for the run log"
+
+
+def test_a_quiet_day_records_no_failures(monkeypatch):
+    """The counter must not fire when articles simply are not funding news."""
+    from signal_engine import extract as extract_mod
+
+    extract_mod.reset_failures()
+    monkeypatch.setattr(extract_mod, "_extract_once", lambda a: [])
+    extract_mod.extract(
+        [Article(title="t", url="https://n/1", source="s", summary="x")],
+        batch_size=4,
+    )
+    assert extract_mod.failures.articles == 0

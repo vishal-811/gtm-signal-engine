@@ -409,6 +409,33 @@ def _send(call, kwargs: dict[str, Any], label: str):
         return call(**kwargs)
 
 
+class UpstreamPayloadError(RuntimeError):
+    """The endpoint answered 200 with something that is not a completion."""
+
+
+def _require_completion(response: Any, label: str) -> Any:
+    """Fail loudly when the endpoint returns 200 with a non-completion body.
+
+    The SDK does not enforce the response shape: it hands the JSON to pydantic's
+    lenient ``construct_type``, so a bare string body comes back as ``str``
+    rather than raising. The first symptom was
+    ``'str' object has no attribute 'usage'`` on every batch — accurate, but it
+    named the SDK's internals instead of the gateway that misbehaved, and a
+    scheduled run reported success while extracting nothing.
+
+    Observed against an OpenAI-compatible gateway from a datacenter IP, where
+    the same request succeeds from a laptop.
+    """
+    if hasattr(response, "choices") and hasattr(response, "usage"):
+        return response
+    body = response if isinstance(response, str) else repr(response)
+    raise UpstreamPayloadError(
+        f"{label}: {endpoint()} returned HTTP 200 but the body is not a chat "
+        f"completion (got {type(response).__name__}). "
+        f"First 300 characters: {body[:300]!r}"
+    )
+
+
 def _guard(choice, label: str, max_tokens: int) -> None:
     if choice.message.refusal:
         raise RefusalError(f"{label}: model declined — {choice.message.refusal}")
@@ -462,7 +489,9 @@ def _call_prompt_mode(
     instructed = system + _schema_instruction(schema)
     kwargs = _base_kwargs(instructed, user, effort, max_tokens)
 
-    response = _send(client().chat.completions.create, kwargs, label)
+    response = _require_completion(
+        _send(client().chat.completions.create, kwargs, label), label
+    )
     usage.add(response.usage)
     _check_cache_health(response.usage, label)
     choice = response.choices[0]
@@ -491,7 +520,9 @@ def _call_prompt_mode(
             ),
         }
     )
-    response = _send(client().chat.completions.create, retry, label)
+    response = _require_completion(
+        _send(client().chat.completions.create, retry, label), label
+    )
     usage.add(response.usage)
     choice = response.choices[0]
     _guard(choice, label, max_tokens)

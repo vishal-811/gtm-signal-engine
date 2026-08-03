@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 
 from .config import prompt, settings
 from .llm import RefusalError, structured_call
@@ -58,6 +59,37 @@ def _render_batch(articles: list[Article]) -> str:
     )
 
 
+@dataclass
+class Failures:
+    """Articles lost to endpoint errors during one run.
+
+    Tracked because a batch that fails contributes an empty list, which is
+    indistinguishable downstream from a batch of articles that simply were not
+    funding news. A scheduled run where the gateway rejected every request
+    reported success and an empty shortlist — exactly what a quiet news day
+    looks like.
+    """
+
+    articles: int = 0
+    batches: int = 0
+    reasons: list[str] = field(default_factory=list)
+
+    def record(self, count: int, reason: str) -> None:
+        self.articles += count
+        self.batches += 1
+        summary = reason.strip().splitlines()[0][:160]
+        if summary and summary not in self.reasons:
+            self.reasons.append(summary)
+
+
+failures = Failures()
+
+
+def reset_failures() -> None:
+    global failures
+    failures = Failures()
+
+
 def _is_batch_rejection(exc: Exception) -> bool:
     """Did the endpoint reject the whole request rather than fail on content?
 
@@ -85,6 +117,7 @@ def _extract_batch(articles: list[Article], depth: int = 0) -> list[FundingEvent
                 log.error(
                     "extraction batch failed for %d articles: %s", len(articles), exc
                 )
+                failures.record(len(articles), str(exc))
                 return []
             middle = len(articles) // 2
             log.warning(
@@ -104,6 +137,7 @@ def _extract_batch(articles: list[Article], depth: int = 0) -> list[FundingEvent
         # systematic blind spot is visible in the run log.
         title = articles[0].title[:80] if articles else "(empty)"
         log.warning("dropping one article the endpoint rejected: %r (%s)", title, exc)
+        failures.record(len(articles), str(exc))
         return []
 
 
@@ -183,4 +217,12 @@ def extract(articles: list[Article], batch_size: int | None = None) -> list[Fund
         len(events),
         funding,
     )
+    if failures.articles:
+        log.warning(
+            "%d of %d articles were lost to endpoint errors (%d batch(es)): %s",
+            failures.articles,
+            len(articles),
+            failures.batches,
+            "; ".join(failures.reasons[:3]),
+        )
     return events

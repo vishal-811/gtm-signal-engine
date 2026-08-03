@@ -165,17 +165,52 @@ class TestWorkflows:
         assert "workflow_dispatch" in triggers
         assert triggers["schedule"][0]["cron"] == "30 2 * * *"
 
-    def test_daily_workflow_passes_every_required_secret(self):
+    def test_daily_workflow_reaches_every_setting_the_pipeline_reads(self):
+        """Any setting configurable in .env must be reachable in CI.
+
+        SENDER_COMPANY was absent here and absent from the workflow, so a
+        scheduled run silently signed its drafts with the default company name.
+        Deriving the list from Settings rather than restating it means a new
+        field cannot be forgotten in both places at once.
+        """
+        from signal_engine.config import Settings
+
         raw = (PROJECT_ROOT / ".github" / "workflows" / "daily.yml").read_text()
-        for secret in (
+        skip = {
+            # Set from GOOGLE_SERVICE_ACCOUNT_JSON instead; a runner cannot
+            # mount a file.
+            "google_service_account_file",
+        }
+        for name in Settings.model_fields:
+            if name in skip:
+                continue
+            env = name.upper()
+            assert f"secrets.{env}" in raw or f"vars.{env}" in raw, (
+                f"{env} is configurable but the workflow never passes it"
+            )
+
+    def test_credentials_are_secrets_and_plain_config_is_not(self):
+        """A leaked sender name is harmless; a leaked key is not. Variables are
+        readable in the Actions UI, which is why the split has to be right."""
+        raw = (PROJECT_ROOT / ".github" / "workflows" / "daily.yml").read_text()
+        for name in (
             "OPENAI_API_KEY",
-            "GOOGLE_SHEET_ID",
             "GOOGLE_SERVICE_ACCOUNT_JSON",
             "SLACK_WEBHOOK_URL",
-            "SENDER_NAME",
-            "SENDER_TITLE",
+            "APOLLO_API_KEY",
         ):
-            assert f"secrets.{secret}" in raw, f"workflow never passes {secret}"
+            assert f"secrets.{name}" in raw, f"{name} must be a secret"
+            assert f"vars.{name}" not in raw, f"{name} must not be a variable"
+
+    def test_daily_workflow_deletes_credentials_after_the_run(self):
+        """The .env it writes must not survive into an uploaded artifact."""
+        workflow = yaml.safe_load(
+            (PROJECT_ROOT / ".github" / "workflows" / "daily.yml").read_text()
+        )
+        steps = workflow["jobs"]["run"]["steps"]
+        cleanup = next(s for s in steps if s.get("name") == "Remove credentials")
+        assert "rm -f .env" in cleanup["run"]
+        assert cleanup["if"] == "always()", "must run even when the pipeline fails"
 
     def test_daily_workflow_notifies_on_failure(self):
         # Otherwise a broken cron is indistinguishable from a quiet day.
